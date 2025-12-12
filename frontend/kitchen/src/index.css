@@ -1,0 +1,321 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 222.2 84% 4.9%;
+    --card: 0 0% 100%;
+    --card-foreground: 222.2 84% 4.9%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 222.2 84% 4.9%;
+    --primary: 221.2 83.2% 53.3%;
+    --primary-foreground: 210 40% 98%;
+    --secondary: 210 40% 96%;
+    --secondary-foreground: 222.2 84% 4.9%;
+    --muted: 210 40% 96%;
+    --muted-foreground: 215.4 16.3% 46.9%;
+    --accent: 210 40% 96%;
+    --accent-foreground: 222.2 84% 4.9%;
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 210 40% 98%;
+    --border: 214.3 31.8% 91.4%;
+    --input: 214.3 31.8% 91.4%;
+    --ring: 221.2 83.2% 53.3%;
+    --radius: 0.5rem;
+  }
+
+  .dark {
+    --background: 222.2 84% 4.9%;
+    --foreground: 210 40% 98%;
+    --card: 222.2 84% 4.9%;
+    --card-foreground: 210 40% 98%;
+    --popover: 222.2 84% 4.9%;
+    --popover-foreground: 210 40% 98%;
+    --primary: 217.2 91.2% 59.8%;
+    --primary-foreground: 222.2 84% 4.9%;
+    --secondary: 217.2 32.6% 17.5%;
+    --secondary-foreground: 210 40% 98%;
+    --muted: 217.2 32.6% 17.5%;
+    --muted-foreground: 215 20.2% 65.1%;
+    --accent: 217.2 32.6% 17.5%;
+    --accent-foreground: 210 40% 98%;
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 210 40% 98%;
+    --border: 217.2 32.6% 17.5%;
+    --input: 217.2 32.6% 17.5%;
+    --ring: 224.3 76.3% 94.1%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-gradient-to-br from-slate-50 to-gray-100 text-foreground;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    /* Touch-optimized styles */
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    -khtml-user-select: none;
+    -moz-user-select: none;
+    -ms-user-select: none;
+    user-select: none;
+    /* Prevent zoom on double tap */
+    touch-action: manipulation;
+  }
+  
+  /* Touch-friendly button styles */
+  button, [role="button"] {
+    @apply min-h-touch min-w-touch;
+    touch-action: manipulation;
+  }
+  
+  /* Large touch targets for interactive elements */
+  .touch-target {
+    @apply min-h-touch-lg min-w-touch-lg;
+  }
+  
+  /* Kitchen-specific styles */
+  .kitchen-card {
+    @apply bg-white text-card-foreground rounded-xl border shadow-md hover:shadow-lg transition-shadow duration-200;
+  }
+  
+  .order-ticket {
+    @apply kitchen-card p-6 space-y-4 border-l-4 border-l-blue-500;
+  }
+  
+  .order-ticket.urgent {
+    @apply border-l-red-500 bg-red-50;
+  }
+  
+  .order-ticket.high {
+    @apply border-l-orange-500 bg-orange-50;
+  }
+  
+  .order-ticket.medium {
+    @apply border-l-yellow-500 bg-yellow-50;
+  }
+  
+  .order-ticket.low {
+    @apply border-l-green-500 bg-green-50;
+  }
+  
+  .station-display {
+    @apply kitchen-card p-8 min-h-[250px] bg-gradient-to-br from-white to-gray-50;
+  }
+
+  /* Brazilian Portuguese typography improvements */
+  .kitchen-title {
+    @apply text-2xl font-bold text-gray-900 tracking-tight;
+    font-feature-settings: 'liga' 1, 'kern' 1;
+  }
+
+  .kitchen-subtitle {
+    @apply text-lg font-semibold text-gray-700;
+  }
+
+  .kitchen-text {
+    @apply text-gray-600 leading-relaxed;
+  }
+
+  /* Status badges with Portuguese labels */
+  .status-recebido {
+    @apply bg-blue-100 text-blue-800 border-blue-200;
+  }
+
+  .status-preparando {
+    @apply bg-yellow-100 text-yellow-800 border-yellow-200;
+  }
+
+  .status-pronto {
+    @apply bg-green-100 text-green-800 border-green-200;
+  }
+
+  .status-atrasado {
+    @apply bg-red-100 text-red-800 border-red-200;
+  }
+
+  .status-espera {
+    @apply bg-gray-100 text-gray-800 border-gray-200;
+  }
+
+  /* Priority badges in Portuguese */
+  .prioridade-urgente {
+    @apply bg-red-500 text-white font-bold animate-pulse;
+  }
+
+  .prioridade-alta {
+    @apply bg-orange-500 text-white font-semibold;
+  }
+
+  .prioridade-media {
+    @apply bg-yellow-500 text-white;
+  }
+
+  .prioridade-baixa {
+    @apply bg-green-500 text-white;
+  }
+
+  /* Tablet-optimized styles for station display */
+  .tablet-optimized {
+    @apply text-base;
+  }
+
+  .tablet-optimized .touch-target {
+    @apply min-h-[44px] min-w-[44px] p-3;
+  }
+
+  .tablet-optimized .touch-optimized {
+    @apply shadow-lg border-2;
+  }
+
+  .tablet-optimized .touch-optimized:hover {
+    @apply shadow-xl transform scale-[1.02] transition-all duration-200;
+  }
+
+  .tablet-optimized .touch-optimized:active {
+    @apply transform scale-[0.98] transition-all duration-100;
+  }
+
+  /* Large touch-friendly buttons */
+  .tablet-optimized button {
+    @apply min-h-[44px] text-base font-medium;
+  }
+
+  .tablet-optimized button.touch-target {
+    @apply min-h-[48px] px-6 py-3;
+  }
+
+  /* Larger text for readability */
+  .tablet-optimized h1 {
+    @apply text-3xl;
+  }
+
+  .tablet-optimized h2 {
+    @apply text-2xl;
+  }
+
+  .tablet-optimized h3 {
+    @apply text-xl;
+  }
+
+  /* Improved spacing for touch interfaces */
+  .tablet-optimized .space-y-3 > * + * {
+    @apply mt-4;
+  }
+
+  .tablet-optimized .space-y-4 > * + * {
+    @apply mt-6;
+  }
+
+  /* Status indicators with better visibility */
+  .tablet-optimized .status-indicator {
+    @apply w-4 h-4 rounded-full border-2 border-white shadow-sm;
+  }
+
+  /* Progress bars with better touch targets */
+  .tablet-optimized .progress-container {
+    @apply h-3 bg-gray-200 rounded-full overflow-hidden;
+  }
+
+  .tablet-optimized .progress-bar {
+    @apply h-full bg-blue-500 transition-all duration-300;
+  }
+
+  /* Card improvements for tablet */
+  .tablet-optimized .card {
+    @apply rounded-xl shadow-md border-2;
+  }
+
+  .tablet-optimized .card:hover {
+    @apply shadow-lg;
+  }
+
+  /* Form elements optimized for touch */
+  .tablet-optimized input,
+  .tablet-optimized select,
+  .tablet-optimized textarea {
+    @apply min-h-[44px] text-base px-4 py-3 border-2 rounded-lg;
+  }
+
+  .tablet-optimized input:focus,
+  .tablet-optimized select:focus,
+  .tablet-optimized textarea:focus {
+    @apply ring-2 ring-blue-500 border-blue-500 outline-none;
+  }
+
+  /* Badge improvements */
+  .tablet-optimized .badge {
+    @apply px-3 py-1 text-sm font-medium rounded-full border;
+  }
+
+  /* Alert improvements */
+  .tablet-optimized .alert {
+    @apply p-4 rounded-lg border-2;
+  }
+
+  /* Responsive grid improvements */
+  @media (min-width: 768px) {
+    .tablet-optimized .grid-responsive {
+      @apply grid-cols-2;
+    }
+  }
+
+  @media (min-width: 1024px) {
+    .tablet-optimized .grid-responsive {
+      @apply grid-cols-3;
+    }
+  }
+
+  /* Loading states */
+  .tablet-optimized .loading-spinner {
+    @apply animate-spin rounded-full border-4 border-gray-200 border-t-blue-500;
+  }
+
+  /* Dialog/Modal improvements for tablet */
+  .tablet-optimized .dialog-overlay {
+    @apply fixed inset-0 bg-black/60 flex items-center justify-center p-6 z-50;
+  }
+
+  .tablet-optimized .dialog-content {
+    @apply bg-white rounded-xl shadow-2xl border-2 max-w-md w-full max-h-[90vh] overflow-y-auto;
+  }
+  
+  /* Priority indicators */
+  .priority-high {
+    @apply border-l-4 border-red-500 bg-red-50 dark:bg-red-950/20;
+  }
+  
+  .priority-medium {
+    @apply border-l-4 border-yellow-500 bg-yellow-50 dark:bg-yellow-950/20;
+  }
+  
+  .priority-low {
+    @apply border-l-4 border-green-500 bg-green-50 dark:bg-green-950/20;
+  }
+  
+  /* Allergen alerts */
+  .allergen-alert {
+    @apply bg-orange-100 text-orange-800 dark:bg-orange-950/20 dark:text-orange-200 border border-orange-200 dark:border-orange-800;
+  }
+  
+  /* Status indicators */
+  .status-pending {
+    @apply bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-200;
+  }
+  
+  .status-preparing {
+    @apply bg-blue-100 text-blue-800 dark:bg-blue-950/20 dark:text-blue-200;
+  }
+  
+  .status-ready {
+    @apply bg-green-100 text-green-800 dark:bg-green-950/20 dark:text-green-200;
+  }
+  
+  .status-delayed {
+    @apply bg-red-100 text-red-800 dark:bg-red-950/20 dark:text-red-200;
+  }
+}

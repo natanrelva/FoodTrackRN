@@ -1,0 +1,17 @@
+{
+  "name": "@foodtrack/types",
+  "version": "1.0.0",
+  "description": "Shared TypeScript types for FoodTrack applications",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch"
+  },
+  "devDependencies": {
+    "typescript": "^5.0.0"
+  },
+  "peerDependencies": {
+    "react": "^18.0.0"
+  }
+}
