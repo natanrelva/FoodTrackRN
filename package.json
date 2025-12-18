@@ -2,7 +2,7 @@
   "name": "foodtrack-workspace",
   "version": "1.0.0",
   "private": true,
-  "description": "FoodTrack monorepo workspace",
+  "description": "Multi-tenant restaurant management system",
   "scripts": {
     "dev": "concurrently \"pnpm dev:api\" \"pnpm dev:client\" \"pnpm dev:tenant\" \"pnpm dev:kitchen\" \"pnpm dev:delivery\"",
     "dev:api": "pnpm --filter @foodtrack/api-gateway dev",
