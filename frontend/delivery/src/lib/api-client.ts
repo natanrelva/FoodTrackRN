@@ -26,16 +26,40 @@ import type {
 // Base API configuration
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:4000';
 
+interface AuthResponse {
+  token: string;
+  refreshToken: string;
+  user: {
+    id: string;
+    email: string;
+    name: string;
+    role: string;
+    tenantId: string;
+  };
+}
+
+interface LoginRequest {
+  email: string;
+  password: string;
+}
+
 class ApiClient {
   private baseUrl: string;
   private token: string | null = null;
 
   constructor(baseUrl: string = API_BASE_URL) {
     this.baseUrl = baseUrl;
+    this.token = localStorage.getItem('deliveryAuthToken');
   }
 
   setAuthToken(token: string) {
     this.token = token;
+    localStorage.setItem('deliveryAuthToken', token);
+  }
+
+  clearAuthToken() {
+    this.token = null;
+    localStorage.removeItem('deliveryAuthToken');
   }
 
   private async request<T>(
@@ -84,6 +108,29 @@ class ApiClient {
         },
       };
     }
+  }
+
+  // Authentication API
+  async login(credentials: LoginRequest): Promise<ApiResponse<AuthResponse>> {
+    return this.request<AuthResponse>('/api/delivery/auth/login', {
+      method: 'POST',
+      body: JSON.stringify(credentials),
+    });
+  }
+
+  async refreshToken(refreshToken: string): Promise<ApiResponse<AuthResponse>> {
+    return this.request<AuthResponse>('/api/delivery/auth/refresh', {
+      method: 'POST',
+      body: JSON.stringify({ refreshToken }),
+    });
+  }
+
+  async logout(): Promise<ApiResponse<void>> {
+    const result = await this.request<void>('/api/delivery/auth/logout', {
+      method: 'POST',
+    });
+    this.clearAuthToken();
+    return result;
   }
 
   // Dashboard API

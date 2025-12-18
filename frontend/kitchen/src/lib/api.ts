@@ -4,13 +4,45 @@ import {
   OrderPriority,
   StationAssignment,
   StationWorkload,
-  InventoryItem
+  InventoryItem,
+  KitchenMetrics,
+  QualityIssue,
+  StatusUpdateLog,
+  PreparationStage
 } from '../types/kitchen';
 import { handleOrderError, handleInventoryError, handleStationError, handleRecipeError } from '../utils/errorHandler';
 import OfflineManager from '../utils/offlineManager';
 import { retryOrderOperation, retryInventoryOperation, retryStationOperation, retryRecipeOperation } from '../utils/retryLogic';
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:4000/api';
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:4000';
+
+// API Response types
+interface ApiResponse<T> {
+  success: boolean;
+  data?: T;
+  error?: {
+    code: string;
+    message: string;
+    details?: any;
+  };
+}
+
+interface AuthResponse {
+  token: string;
+  refreshToken: string;
+  user: {
+    id: string;
+    email: string;
+    name: string;
+    role: string;
+    tenantId: string;
+  };
+}
+
+interface LoginRequest {
+  email: string;
+  password: string;
+}
 
 // API Client class for kitchen operations
 export class KitchenApiClient {
@@ -20,54 +52,97 @@ export class KitchenApiClient {
 
   constructor(baseUrl: string = API_BASE_URL) {
     this.baseUrl = baseUrl;
-    this.token = localStorage.getItem('authToken');
+    this.token = localStorage.getItem('kitchenAuthToken');
     this.offlineManager = OfflineManager.getInstance();
   }
 
-  private async request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
-    const url = `${this.baseUrl}${endpoint}`;
-    
-    const config: RequestInit = {
-      headers: {
-        'Content-Type': 'application/json',
-        ...(this.token && { Authorization: `Bearer ${this.token}` }),
-        ...options.headers,
-      },
-      ...options,
+  private async request<T>(
+    endpoint: string,
+    options: RequestInit = {}
+  ): Promise<ApiResponse<T>> {
+    const url = `${this.baseUrl}/api${endpoint}`;
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      ...(options.headers as Record<string, string>),
     };
+
+    if (this.token) {
+      headers.Authorization = `Bearer ${this.token}`;
+    }
 
     // Add timeout signal
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
-    config.signal = controller.signal;
+    const config: RequestInit = {
+      ...options,
+      headers,
+      signal: controller.signal,
+    };
 
     try {
       const response = await fetch(url, config);
       clearTimeout(timeoutId);
 
+      const data = await response.json();
+
       if (!response.ok) {
-        const errorData = await response.json().catch(() => ({ message: 'Unknown error' }));
-        const error = new Error(errorData.message || `HTTP ${response.status}: ${response.statusText}`);
-        (error as any).status = response.status;
-        throw error;
+        return {
+          success: false,
+          error: {
+            code: response.status.toString(),
+            message: data.message || 'Request failed',
+            details: data.details,
+          },
+        };
       }
 
-      return response.json();
+      return {
+        success: true,
+        data,
+      };
     } catch (error) {
       clearTimeout(timeoutId);
-      throw error;
+      return {
+        success: false,
+        error: {
+          code: 'NETWORK_ERROR',
+          message: error instanceof Error ? error.message : 'Network error occurred',
+        },
+      };
     }
   }
 
   // Authentication
   setAuthToken(token: string) {
     this.token = token;
-    localStorage.setItem('authToken', token);
+    localStorage.setItem('kitchenAuthToken', token);
   }
 
   clearAuthToken() {
     this.token = null;
-    localStorage.removeItem('authToken');
+    localStorage.removeItem('kitchenAuthToken');
+  }
+
+  async login(credentials: LoginRequest): Promise<ApiResponse<AuthResponse>> {
+    return this.request<AuthResponse>('/kitchen/auth/login', {
+      method: 'POST',
+      body: JSON.stringify(credentials),
+    });
+  }
+
+  async refreshToken(refreshToken: string): Promise<ApiResponse<AuthResponse>> {
+    return this.request<AuthResponse>('/kitchen/auth/refresh', {
+      method: 'POST',
+      body: JSON.stringify({ refreshToken }),
+    });
+  }
+
+  async logout(): Promise<ApiResponse<void>> {
+    const result = await this.request<void>('/kitchen/auth/logout', {
+      method: 'POST',
+    });
+    this.clearAuthToken();
+    return result;
   }
 
   // Kitchen Order Operations
@@ -79,7 +154,7 @@ export class KitchenApiClient {
     dateTo?: Date;
     page?: number;
     limit?: number;
-  }): Promise<{ orders: KitchenOrder[] }> {
+  }): Promise<ApiResponse<{ orders: KitchenOrder[] }>> {
     // Use mock data in development
     if (import.meta.env.DEV) {
       const { mockKitchenOrders } = await import('../data/mockKitchenOrders');
@@ -109,7 +184,7 @@ export class KitchenApiClient {
       // Simulate API delay
       await new Promise(resolve => setTimeout(resolve, 500));
       
-      return { orders: filteredOrders };
+      return { success: true, data: { orders: filteredOrders } };
     }
 
     const params = new URLSearchParams();
@@ -144,15 +219,42 @@ export class KitchenApiClient {
     return this.request<{ orders: KitchenOrder[] }>(endpoint);
   }
 
-  async getKitchenOrder(id: string): Promise<KitchenOrder> {
+  async getKitchenOrder(id: string): Promise<ApiResponse<KitchenOrder>> {
     return this.request<KitchenOrder>(`/kitchen/orders/${id}`);
+  }
+
+  // Kitchen Metrics and Performance API
+  async getKitchenMetrics(): Promise<ApiResponse<KitchenMetrics>> {
+    return this.request<KitchenMetrics>('/kitchen/metrics');
+  }
+
+  async getStationPerformance(stationId?: string): Promise<ApiResponse<any>> {
+    const endpoint = stationId 
+      ? `/kitchen/stations/${stationId}/performance`
+      : '/kitchen/stations/performance';
+    return this.request<any>(endpoint);
+  }
+
+  async getPreparationStages(orderId: string): Promise<ApiResponse<PreparationStage[]>> {
+    return this.request<PreparationStage[]>(`/kitchen/orders/${orderId}/stages`);
+  }
+
+  async updatePreparationStage(
+    orderId: string,
+    stageId: string,
+    status: 'started' | 'completed' | 'delayed'
+  ): Promise<ApiResponse<any>> {
+    return this.request<any>(`/kitchen/orders/${orderId}/stages/${stageId}`, {
+      method: 'PUT',
+      body: JSON.stringify({ status }),
+    });
   }
 
   async updateOrderStatus(
     orderId: string, 
     status: KitchenStatus, 
     stationId?: string
-  ): Promise<KitchenOrder> {
+  ): Promise<ApiResponse<KitchenOrder>> {
     // Check if offline
     if (!this.offlineManager.getConnectionStatus()) {
       this.offlineManager.updateOrderStatusOffline(orderId, status, stationId);
@@ -161,9 +263,12 @@ export class KitchenApiClient {
       const offlineData = this.offlineManager.getOfflineData();
       const order = offlineData?.orders.find(o => o.id === orderId);
       if (order) {
-        return { ...order, status };
+        return { success: true, data: { ...order, status } };
       }
-      throw new Error('Order not found in offline cache');
+      return {
+        success: false,
+        error: { code: 'OFFLINE_ERROR', message: 'Order not found in offline cache' }
+      };
     }
 
     // Use mock data in development
@@ -172,7 +277,10 @@ export class KitchenApiClient {
       const order = mockKitchenOrders.find(o => o.id === orderId);
       
       if (!order) {
-        throw new Error('Order not found');
+        return {
+          success: false,
+          error: { code: 'NOT_FOUND', message: 'Order not found' }
+        };
       }
       
       // Simulate API delay
@@ -180,22 +288,20 @@ export class KitchenApiClient {
       
       // Return updated order (in real implementation, this would be persisted)
       return {
-        ...order,
-        status
+        success: true,
+        data: { ...order, status }
       };
     }
 
-    return retryOrderOperation(
-      () => this.request<KitchenOrder>(`/kitchen/orders/${orderId}/status`, {
-        method: 'PUT',
-        body: JSON.stringify({ status, stationId }),
-      }),
-      orderId,
-      'status_update'
-    ).catch(error => {
-      const kitchenError = handleOrderError(error, orderId, 'status_update');
-      throw kitchenError;
+    return this.request<KitchenOrder>(`/kitchen/orders/${orderId}/status`, {
+      method: 'PUT',
+      body: JSON.stringify({ status, stationId }),
     });
+  }
+
+  // WebSocket Token API
+  async getWebSocketToken(): Promise<ApiResponse<{ token: string; url: string }>> {
+    return this.request<{ token: string; url: string }>('/kitchen/websocket/token');
   }
 
   async assignOrderToStation(orderId: string, stationId: string): Promise<StationAssignment> {
