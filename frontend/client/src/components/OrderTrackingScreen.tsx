@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { ArrowLeft, Clock, CheckCircle2, Package, Truck, Home, MessageCircle, Instagram } from 'lucide-react';
 import { WebScreen } from '@foodtrack/types';
 import { motion } from 'motion/react';
+import { useWebSocketContext } from '../contexts/WebSocketContext';
 
 import { OrderTrackingScreenProps, WebOrderStatus } from '@foodtrack/types';
 
@@ -48,31 +49,94 @@ export function OrderTrackingScreen({ orderId, onNavigate }: OrderTrackingScreen
     { time: '14:25', message: 'Pagamento aprovado' }
   ]);
 
-  // Simulate status progression
+  const { connected, recentOrderUpdates, trackOrder, stopTrackingOrder } = useWebSocketContext();
+
+  // Track this order for real-time updates
   useEffect(() => {
-    const statuses: OrderStatus[] = ['paid', 'processing', 'in_delivery', 'delivered'];
-    let currentIndex = 0;
+    if (connected && orderId) {
+      trackOrder(orderId);
+      
+      return () => {
+        stopTrackingOrder(orderId);
+      };
+    }
+  }, [connected, orderId, trackOrder, stopTrackingOrder]);
 
-    const interval = setInterval(() => {
-      if (currentIndex < statuses.length - 1) {
-        currentIndex++;
-        setCurrentStatus(statuses[currentIndex]);
-        
-        // Add notification
-        const now = new Date();
-        const timeStr = `${now.getHours()}:${now.getMinutes().toString().padStart(2, '0')}`;
-        setNotifications((prev) => [
-          ...prev,
-          { time: timeStr, message: statusConfig[statuses[currentIndex]].label }
-        ]);
+  // Listen for real-time order updates
+  useEffect(() => {
+    const orderUpdate = recentOrderUpdates.find(
+      update => update.payload.order.id === orderId
+    );
 
-        // Update estimated time
-        setEstimatedTime((prev) => Math.max(0, prev - 15));
+    if (orderUpdate) {
+      const order = orderUpdate.payload.order;
+      
+      // Update status based on order status
+      if (order.status) {
+        setCurrentStatus(order.status as OrderStatus);
       }
-    }, 5000);
 
-    return () => clearInterval(interval);
-  }, []);
+      // Add notification for the update
+      const now = new Date();
+      const timeStr = `${now.getHours()}:${now.getMinutes().toString().padStart(2, '0')}`;
+      const message = getStatusMessage(orderUpdate.type, order.status);
+      
+      setNotifications(prev => [
+        ...prev,
+        { time: timeStr, message }
+      ]);
+
+      // Update estimated time if available
+      if (order.estimatedDeliveryTime) {
+        const now = new Date();
+        const estimatedDelivery = new Date(order.estimatedDeliveryTime);
+        const diffMinutes = Math.max(0, Math.floor((estimatedDelivery.getTime() - now.getTime()) / (1000 * 60)));
+        setEstimatedTime(diffMinutes);
+      }
+    }
+  }, [recentOrderUpdates, orderId]);
+
+  // Helper function to get status message
+  const getStatusMessage = (eventType: string, status: string): string => {
+    switch (eventType) {
+      case 'ORDER_STATUS_CHANGED':
+        return statusConfig[status as OrderStatus]?.label || `Status atualizado: ${status}`;
+      case 'ORDER_UPDATED':
+        return 'Pedido atualizado';
+      case 'ORDER_CANCELLED':
+        return 'Pedido cancelado';
+      default:
+        return 'Atualização do pedido';
+    }
+  };
+
+  // Fallback: Simulate status progression if no real-time updates
+  useEffect(() => {
+    if (!connected) {
+      const statuses: OrderStatus[] = ['paid', 'processing', 'in_delivery', 'delivered'];
+      let currentIndex = 0;
+
+      const interval = setInterval(() => {
+        if (currentIndex < statuses.length - 1) {
+          currentIndex++;
+          setCurrentStatus(statuses[currentIndex]);
+          
+          // Add notification
+          const now = new Date();
+          const timeStr = `${now.getHours()}:${now.getMinutes().toString().padStart(2, '0')}`;
+          setNotifications((prev) => [
+            ...prev,
+            { time: timeStr, message: statusConfig[statuses[currentIndex]].label }
+          ]);
+
+          // Update estimated time
+          setEstimatedTime((prev) => Math.max(0, prev - 15));
+        }
+      }, 5000);
+
+      return () => clearInterval(interval);
+    }
+  }, [connected]);
 
   const StatusIcon = statusConfig[currentStatus].icon;
 

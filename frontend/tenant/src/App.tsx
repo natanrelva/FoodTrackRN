@@ -7,6 +7,7 @@ import { ChannelIntegration } from './components/ChannelIntegration';
 import { Reports } from './components/Reports';
 import { Settings } from './components/Settings';
 import { Sidebar } from './components/Sidebar';
+import { WebSocketProvider } from './contexts/WebSocketContext';
 import { AdminScreen } from '@foodtrack/types';
 
 export default function App() {
@@ -40,11 +41,13 @@ export default function App() {
   };
 
   return (
-    <div className="flex h-screen bg-gray-50">
-      <Sidebar currentScreen={currentScreen} onNavigate={setCurrentScreen} />
-      <main className="flex-1 overflow-auto">
-        {renderScreen()}
-      </main>
-    </div>
+    <WebSocketProvider>
+      <div className="flex h-screen bg-gray-50">
+        <Sidebar currentScreen={currentScreen} onNavigate={setCurrentScreen} />
+        <main className="flex-1 overflow-auto">
+          {renderScreen()}
+        </main>
+      </div>
+    </WebSocketProvider>
   );
 }

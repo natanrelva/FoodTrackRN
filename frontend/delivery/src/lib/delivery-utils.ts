@@ -1,27 +1,72 @@
 import { 
   DeliveryStatus, 
-  AgentStatus, 
-  VehicleType, 
-  GeoLocation,
-  DeliveryAgent,
-  Delivery,
-  DELIVERY_STATUS_LABELS,
-  AGENT_STATUS_LABELS,
-  VEHICLE_TYPE_LABELS
+  DELIVERY_STATUS_LABELS
 } from '@foodtrack/types';
+
+// Local types for delivery app
+export type AgentStatus = 'available' | 'busy' | 'offline' | 'break';
+export type VehicleType = 'bike' | 'motorcycle' | 'car' | 'walking';
+
+export interface GeoLocation {
+  lat: number;
+  lng: number;
+  accuracy?: number;
+  timestamp?: Date;
+}
+
+export interface DeliveryAgent {
+  id: string;
+  name: string;
+  phone: string;
+  status: AgentStatus;
+  vehicleType: VehicleType;
+  currentLocation?: GeoLocation;
+  rating: number;
+  totalDeliveries: number;
+  currentDeliveries: string[]; // Array of delivery IDs
+  maxConcurrentDeliveries: number;
+}
+
+export interface Delivery {
+  id: string;
+  orderId: string;
+  agentId?: string;
+  status: DeliveryStatus;
+  pickupLocation: GeoLocation;
+  deliveryLocation: GeoLocation;
+  estimatedTime?: number;
+  actualTime?: number;
+  distance?: number;
+  notes?: string;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+// Local constants
+export const AGENT_STATUS_LABELS: Record<AgentStatus, string> = {
+  available: 'Available',
+  busy: 'Busy',
+  offline: 'Offline',
+  break: 'On Break',
+};
+
+export const VEHICLE_TYPE_LABELS: Record<VehicleType, string> = {
+  bike: 'Bicycle',
+  motorcycle: 'Motorcycle',
+  car: 'Car',
+  walking: 'Walking',
+};
 
 // Status validation utilities
 export class DeliveryStatusUtils {
   static isValidTransition(currentStatus: DeliveryStatus, newStatus: DeliveryStatus): boolean {
     const validTransitions: Record<DeliveryStatus, DeliveryStatus[]> = {
-      pending: ['assigned', 'cancelled'],
-      assigned: ['accepted', 'cancelled'],
-      accepted: ['picked_up', 'cancelled'],
-      picked_up: ['in_transit', 'cancelled'],
-      in_transit: ['delivered', 'failed', 'cancelled'],
+      pending: ['assigned'],
+      assigned: ['picked_up'],
+      picked_up: ['in_transit'],
+      in_transit: ['delivered', 'failed'],
       delivered: [], // Terminal state
       failed: ['assigned'], // Can be reassigned
-      cancelled: [], // Terminal state
     };
 
     return validTransitions[currentStatus]?.includes(newStatus) ?? false;
@@ -35,18 +80,16 @@ export class DeliveryStatusUtils {
     const colors: Record<DeliveryStatus, string> = {
       pending: 'bg-gray-100 text-gray-800',
       assigned: 'bg-blue-100 text-blue-800',
-      accepted: 'bg-green-100 text-green-800',
       picked_up: 'bg-yellow-100 text-yellow-800',
       in_transit: 'bg-purple-100 text-purple-800',
       delivered: 'bg-green-100 text-green-800',
       failed: 'bg-red-100 text-red-800',
-      cancelled: 'bg-gray-100 text-gray-800',
     };
     return colors[status] || 'bg-gray-100 text-gray-800';
   }
 
   static isTerminalStatus(status: DeliveryStatus): boolean {
-    return ['delivered', 'cancelled'].includes(status);
+    return ['delivered', 'failed'].includes(status);
   }
 
   static isActiveStatus(status: DeliveryStatus): boolean {
@@ -65,7 +108,7 @@ export class AgentUtils {
       offline: 'bg-gray-100 text-gray-800',
       available: 'bg-green-100 text-green-800',
       busy: 'bg-red-100 text-red-800',
-      on_break: 'bg-yellow-100 text-yellow-800',
+      break: 'bg-yellow-100 text-yellow-800',
     };
     return colors[status] || 'bg-gray-100 text-gray-800';
   }
@@ -89,13 +132,13 @@ export class LocationUtils {
   // Calculate distance between two points using Haversine formula
   static calculateDistance(point1: GeoLocation, point2: GeoLocation): number {
     const R = 6371; // Earth's radius in kilometers
-    const dLat = this.toRadians(point2.latitude - point1.latitude);
-    const dLon = this.toRadians(point2.longitude - point1.longitude);
+    const dLat = this.toRadians(point2.lat - point1.lat);
+    const dLon = this.toRadians(point2.lng - point1.lng);
     
     const a = 
       Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-      Math.cos(this.toRadians(point1.latitude)) * 
-      Math.cos(this.toRadians(point2.latitude)) * 
+      Math.cos(this.toRadians(point1.lat)) * 
+      Math.cos(this.toRadians(point2.lat)) * 
       Math.sin(dLon / 2) * Math.sin(dLon / 2);
     
     const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
@@ -118,7 +161,7 @@ export class LocationUtils {
   }
 
   static formatCoordinates(location: GeoLocation): string {
-    return `${location.latitude.toFixed(6)}, ${location.longitude.toFixed(6)}`;
+    return `${location.lat.toFixed(6)}, ${location.lng.toFixed(6)}`;
   }
 }
 
@@ -184,13 +227,12 @@ export class DeliveryUtils {
     // Average speeds in km/h for different vehicle types
     const speeds: Record<VehicleType, number> = {
       walking: 5,
-      bicycle: 15,
-      scooter: 25,
+      bike: 15,
       motorcycle: 35,
       car: 30, // Considering city traffic
     };
 
-    const speed = speeds[vehicleType] || speeds.bicycle;
+    const speed = speeds[vehicleType] || speeds.bike;
     const travelTimeHours = distance / speed;
     const travelTimeMinutes = travelTimeHours * 60;
     
@@ -198,36 +240,24 @@ export class DeliveryUtils {
     const bufferMinutes = Math.max(5, travelTimeMinutes * 0.2);
     const totalMinutes = travelTimeMinutes + bufferMinutes;
 
-    return TimeUtils.addMinutes(pickupTime, totalMinutes);
+    return new Date(pickupTime.getTime() + totalMinutes * 60 * 1000);
   }
 
   static getDeliveryProgress(delivery: Delivery): number {
     const statusProgress: Record<DeliveryStatus, number> = {
       pending: 0,
       assigned: 20,
-      accepted: 40,
       picked_up: 60,
       in_transit: 80,
       delivered: 100,
       failed: 0,
-      cancelled: 0,
     };
     return statusProgress[delivery.status] || 0;
   }
 
   static canAssignToAgent(agent: DeliveryAgent, _deliveryLocation: GeoLocation): boolean {
     // Check if agent is available
-    if (!AgentUtils.isAvailable(agent)) {
-      return false;
-    }
-
-    // Check if delivery location is within agent's zones (simplified check)
-    if (agent.deliveryZones.length === 0) {
-      return true; // No zone restrictions
-    }
-
-    // For now, just check if any zone is active
-    return agent.deliveryZones.some(zone => zone.isActive);
+    return agent.status === 'available';
   }
 }
 
@@ -236,15 +266,15 @@ export class ValidationUtils {
   static validateGeoLocation(location: Partial<GeoLocation>): string[] {
     const errors: string[] = [];
     
-    if (typeof location.latitude !== 'number') {
+    if (typeof location.lat !== 'number') {
       errors.push('Latitude is required and must be a number');
-    } else if (!LocationUtils.isValidCoordinate(location.latitude, 0)) {
+    } else if (location.lat < -90 || location.lat > 90) {
       errors.push('Latitude must be between -90 and 90');
     }
     
-    if (typeof location.longitude !== 'number') {
+    if (typeof location.lng !== 'number') {
       errors.push('Longitude is required and must be a number');
-    } else if (!LocationUtils.isValidCoordinate(0, location.longitude)) {
+    } else if (location.lng < -180 || location.lng > 180) {
       errors.push('Longitude must be between -180 and 180');
     }
     
@@ -283,12 +313,8 @@ export const PRIORITY_ORDER: Record<'low' | 'normal' | 'high' | 'urgent', number
 // Sort deliveries by priority and estimated time
 export function sortDeliveriesByPriority(deliveries: Delivery[]): Delivery[] {
   return [...deliveries].sort((a, b) => {
-    // First sort by priority
-    const priorityDiff = PRIORITY_ORDER[b.priority] - PRIORITY_ORDER[a.priority];
-    if (priorityDiff !== 0) return priorityDiff;
-    
-    // Then by estimated delivery time
-    return a.estimatedDeliveryTime.getTime() - b.estimatedDeliveryTime.getTime();
+    // Sort by creation time (newest first)
+    return b.createdAt.getTime() - a.createdAt.getTime();
   });
 }
 
@@ -303,5 +329,5 @@ export function filterDeliveriesByStatus(
 
 // Filter agents by availability
 export function filterAvailableAgents(agents: DeliveryAgent[]): DeliveryAgent[] {
-  return agents.filter(agent => AgentUtils.isAvailable(agent));
+  return agents.filter(agent => agent.status === 'available');
 }

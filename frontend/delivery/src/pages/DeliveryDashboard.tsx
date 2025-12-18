@@ -2,8 +2,20 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { MapPin, Clock, Users, Package } from 'lucide-react'
+import { useWebSocketContext } from '../contexts/WebSocketContext'
 
 export function DeliveryDashboard() {
+  const { 
+    connected, 
+    availableDeliveries, 
+    assignedDeliveries, 
+    acceptDelivery 
+  } = useWebSocketContext();
+
+  const handleAcceptDelivery = (orderId: string) => {
+    acceptDelivery(orderId);
+  };
+
   return (
     <div className="space-y-6">
       {/* Page Header */}
@@ -20,9 +32,9 @@ export function DeliveryDashboard() {
             <Package className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">12</div>
+            <div className="text-2xl font-bold">{assignedDeliveries.length}</div>
             <p className="text-xs text-muted-foreground">
-              +2 from last hour
+              {connected ? '● Live data' : 'Offline data'}
             </p>
           </CardContent>
         </Card>
@@ -59,7 +71,7 @@ export function DeliveryDashboard() {
             <MapPin className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">5</div>
+            <div className="text-2xl font-bold">{availableDeliveries.length}</div>
             <p className="text-xs text-muted-foreground">
               Awaiting assignment
             </p>
@@ -79,23 +91,34 @@ export function DeliveryDashboard() {
           </CardHeader>
           <CardContent>
             <div className="space-y-4">
-              {[1, 2, 3].map((order) => (
-                <div key={order} className="flex items-center justify-between p-4 border rounded-lg">
-                  <div className="flex-1">
-                    <div className="flex items-center space-x-2">
-                      <span className="font-medium">Order #{1000 + order}</span>
-                      <Badge variant="outline">Ready</Badge>
+              {availableDeliveries.length > 0 ? (
+                availableDeliveries.map((orderEvent) => {
+                  const order = orderEvent.payload.order;
+                  return (
+                    <div key={order.id} className="flex items-center justify-between p-4 border rounded-lg">
+                      <div className="flex-1">
+                        <div className="flex items-center space-x-2">
+                          <span className="font-medium">Order #{order.number || order.id.slice(0, 8)}</span>
+                          <Badge variant="outline">{order.status}</Badge>
+                        </div>
+                        <p className="text-sm text-gray-600 mt-1">
+                          {(order as any).deliveryAddress || 'Address not available'} • {(order as any).totalAmount ? `R$ ${(order as any).totalAmount.toFixed(2)}` : 'N/A'}
+                        </p>
+                        <p className="text-xs text-gray-500">
+                          Created: {new Date(order.createdAt).toLocaleTimeString()}
+                        </p>
+                      </div>
+                      <Button size="sm" onClick={() => handleAcceptDelivery(order.id)}>
+                        Accept
+                      </Button>
                     </div>
-                    <p className="text-sm text-gray-600 mt-1">
-                      123 Main St, Downtown • 2.3 km
-                    </p>
-                    <p className="text-xs text-gray-500">
-                      Prep time: 15 min
-                    </p>
-                  </div>
-                  <Button size="sm">Assign</Button>
+                  );
+                })
+              ) : (
+                <div className="text-center py-8 text-gray-500">
+                  {connected ? 'No pending deliveries' : 'Connecting to real-time updates...'}
                 </div>
-              ))}
+              )}
             </div>
           </CardContent>
         </Card>
@@ -110,23 +133,32 @@ export function DeliveryDashboard() {
           </CardHeader>
           <CardContent>
             <div className="space-y-4">
-              {[1, 2, 3].map((delivery) => (
-                <div key={delivery} className="flex items-center justify-between p-4 border rounded-lg">
-                  <div className="flex-1">
-                    <div className="flex items-center space-x-2">
-                      <span className="font-medium">Agent {delivery}</span>
-                      <Badge variant="default">In Transit</Badge>
+              {assignedDeliveries.length > 0 ? (
+                assignedDeliveries.map((deliveryEvent) => {
+                  const delivery = deliveryEvent.payload;
+                  return (
+                    <div key={delivery.orderId} className="flex items-center justify-between p-4 border rounded-lg">
+                      <div className="flex-1">
+                        <div className="flex items-center space-x-2">
+                          <span className="font-medium">Agent {delivery.deliveryAgentId?.slice(0, 8) || 'Unknown'}</span>
+                          <Badge variant="default">{delivery.status}</Badge>
+                        </div>
+                        <p className="text-sm text-gray-600 mt-1">
+                          Order #{delivery.orderId.slice(0, 8)} • ETA: {delivery.estimatedArrival ? new Date(delivery.estimatedArrival).toLocaleTimeString() : 'N/A'}
+                        </p>
+                        <p className="text-xs text-gray-500">
+                          {delivery.location ? `Lat: ${delivery.location.lat.toFixed(4)}, Lng: ${delivery.location.lng.toFixed(4)}` : 'Location not available'}
+                        </p>
+                      </div>
+                      <Button variant="outline" size="sm">Track</Button>
                     </div>
-                    <p className="text-sm text-gray-600 mt-1">
-                      Order #100{delivery} • ETA: {15 + delivery * 5} min
-                    </p>
-                    <p className="text-xs text-gray-500">
-                      456 Oak Ave, Uptown
-                    </p>
-                  </div>
-                  <Button variant="outline" size="sm">Track</Button>
+                  );
+                })
+              ) : (
+                <div className="text-center py-8 text-gray-500">
+                  {connected ? 'No active deliveries' : 'Connecting to real-time updates...'}
                 </div>
-              ))}
+              )}
             </div>
           </CardContent>
         </Card>

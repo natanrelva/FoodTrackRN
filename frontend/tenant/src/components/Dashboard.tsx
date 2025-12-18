@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Search, Filter, AlertCircle, DollarSign, ShoppingCart, TrendingUp, Clock } from 'lucide-react';
 import { mockOrders } from '../data/mockData';
+import { useWebSocketContext } from '../contexts/WebSocketContext';
 import { DashboardProps } from '@foodtrack/types';
 
 export function Dashboard({ onOrderClick }: DashboardProps) {
@@ -8,20 +9,48 @@ export function Dashboard({ onOrderClick }: DashboardProps) {
   const [channelFilter, setChannelFilter] = useState<string>('all');
   const [searchTerm, setSearchTerm] = useState('');
 
-  const filteredOrders = mockOrders.filter(order => {
+  const { 
+    connected, 
+    recentOrders, 
+    orderUpdates, 
+    realTimeMetrics, 
+    subscribeToOrderUpdates, 
+    subscribeToMetrics 
+  } = useWebSocketContext();
+
+  // Subscribe to real-time updates when connected
+  useEffect(() => {
+    if (connected) {
+      subscribeToOrderUpdates();
+      subscribeToMetrics();
+    }
+  }, [connected, subscribeToOrderUpdates, subscribeToMetrics]);
+
+  // Use real-time data if available, fallback to mock data
+  const ordersToDisplay = recentOrders.length > 0 
+    ? recentOrders.map(event => event.payload.order) 
+    : mockOrders;
+
+  const filteredOrders = ordersToDisplay.filter(order => {
     const matchesStatus = statusFilter === 'all' || order.status === statusFilter;
     const matchesChannel = channelFilter === 'all' || order.channel === channelFilter;
-    const matchesSearch = order.number.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         order.customer.name.toLowerCase().includes(searchTerm.toLowerCase());
+    const matchesSearch = (order.orderNumber || order.id).toLowerCase().includes(searchTerm.toLowerCase()) ||
+                         (order.customerName || '').toLowerCase().includes(searchTerm.toLowerCase());
     return matchesStatus && matchesChannel && matchesSearch;
   });
 
-  const totalRevenue = mockOrders
-    .filter(o => o.payment.status === 'confirmed')
-    .reduce((sum, o) => sum + o.payment.amount, 0);
+  // Use real-time metrics if available, otherwise calculate from orders
+  const totalRevenue = realTimeMetrics?.totalRevenueToday || 
+    ordersToDisplay
+      .filter(o => o.status === 'delivered' || o.status === 'paid')
+      .reduce((sum, o) => sum + (o.totalAmount || 0), 0);
   
-  const averageTicket = totalRevenue / mockOrders.length;
-  const delayedOrders = mockOrders.filter(o => {
+  const totalOrders = realTimeMetrics?.completedOrdersToday || ordersToDisplay.length;
+  const averageTicket = totalOrders > 0 ? totalRevenue / totalOrders : 0;
+  const activeOrders = realTimeMetrics?.activeOrders || 
+    ordersToDisplay.filter(o => o.status !== 'delivered' && o.status !== 'cancelled').length;
+  
+  const delayedOrders = ordersToDisplay.filter(o => {
     const orderTime = new Date(o.createdAt).getTime();
     const now = Date.now();
     return (now - orderTime) > 60 * 60 * 1000 && o.status !== 'delivered' && o.status !== 'cancelled';
@@ -77,6 +106,7 @@ export function Dashboard({ onOrderClick }: DashboardProps) {
           </div>
           <p className="text-2xl">R$ {totalRevenue.toFixed(2)}</p>
           <p className="text-sm text-green-600 mt-1">+12% vs ontem</p>
+          {connected && <span className="text-xs text-green-600">● Ao vivo</span>}
         </div>
 
         <div className="bg-white p-6 rounded-lg shadow-sm border border-gray-200">
@@ -84,8 +114,9 @@ export function Dashboard({ onOrderClick }: DashboardProps) {
             <span className="text-gray-600">Pedidos Hoje</span>
             <ShoppingCart className="w-5 h-5 text-blue-600" />
           </div>
-          <p className="text-2xl">{mockOrders.length}</p>
-          <p className="text-sm text-blue-600 mt-1">4 em andamento</p>
+          <p className="text-2xl">{totalOrders}</p>
+          <p className="text-sm text-blue-600 mt-1">{activeOrders} em andamento</p>
+          {connected && <span className="text-xs text-green-600">● Ao vivo</span>}
         </div>
 
         <div className="bg-white p-6 rounded-lg shadow-sm border border-gray-200">
