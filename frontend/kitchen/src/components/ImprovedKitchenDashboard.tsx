@@ -31,7 +31,7 @@ export function ImprovedKitchenDashboard() {
     return () => clearInterval(interval);
   }, [refreshOrders]);
 
-  const filteredOrders = orders.filter(order => {
+  const filteredOrders = (orders || []).filter(order => {
     // Filter by status
     if (filterMode === 'pending' && order.status !== 'received') return false;
     if (filterMode === 'preparing' && order.status !== 'in_preparation') return false;
@@ -51,16 +51,17 @@ export function ImprovedKitchenDashboard() {
   });
 
   const getOrderStats = () => {
-    const pending = orders.filter(o => o.status === 'received').length;
-    const preparing = orders.filter(o => o.status === 'in_preparation').length;
-    const ready = orders.filter(o => o.status === 'ready_for_pickup').length;
-    const urgent = orders.filter(o => o.priority === 'urgent' || o.priority === 'high').length;
+    const safeOrders = orders || [];
+    const pending = safeOrders.filter(o => o.status === 'received').length;
+    const preparing = safeOrders.filter(o => o.status === 'in_preparation').length;
+    const ready = safeOrders.filter(o => o.status === 'ready_for_pickup').length;
+    const urgent = safeOrders.filter(o => o.priority === 'urgent' || o.priority === 'high').length;
     
     return { pending, preparing, ready, urgent };
   };
 
   const getAllOrderItems = (): KitchenOrderItem[] => {
-    return orders.flatMap(order => order.items);
+    return (orders || []).flatMap(order => order.items);
   };
 
   const handleOrderStatusUpdate = async (orderId: string, status: string) => {
@@ -238,7 +239,7 @@ export function ImprovedKitchenDashboard() {
           {/* Filter Buttons */}
           <div className="flex items-center gap-1">
             {[
-              { key: 'all', label: 'Todos', count: orders.length },
+              { key: 'all', label: 'Todos', count: (orders || []).length },
               { key: 'pending', label: 'Pendentes', count: stats.pending },
               { key: 'preparing', label: 'Preparando', count: stats.preparing },
               { key: 'ready', label: 'Prontos', count: stats.ready },

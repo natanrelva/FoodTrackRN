@@ -40,7 +40,7 @@ export interface ClientWebSocketEvents {
 
 export function useWebSocket(options: UseWebSocketOptions = {}) {
   const {
-    url = process.env.VITE_WEBSOCKET_URL || 'http://localhost:4000',
+    url = import.meta.env.VITE_WEBSOCKET_URL || 'http://localhost:4000',
     autoConnect = true,
     reconnectAttempts = 5,
     reconnectDelay = 1000,
