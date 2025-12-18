@@ -1,25 +1,60 @@
 // Main export file for @foodtrack/types package
 
-// Product types
-export * from './product';
-
-// Order and item types
-export * from './order';
-
-// Status types
+// Core types and schemas (order matters to avoid circular dependencies)
 export * from './status';
+export * from './user';
+export * from './product';
+export * from './order';
+export * from './websocket';
+export * from './constants';
 
-// Navigation types
+// Legacy types (for backward compatibility) - selective exports to avoid conflicts
 export * from './navigation';
-
-// Component props types
 export * from './components';
 
-// Admin-specific types
-export * from './admin';
+// Admin types (excluding conflicting User type)
+export type { Channel, MessageLog } from './admin';
 
-// Kitchen-specific types
-export * from './kitchen';
+// Kitchen types (excluding conflicting KitchenStatus)
+export type {
+  OrderPriority,
+  ItemStatus,
+  StationType,
+  StationStatus,
+  AllergenInfo,
+  KitchenOrderItem,
+  KitchenOrder,
+  StationAssignment,
+  PreparationStation,
+  Recipe,
+  InventoryItem,
+  StationWorkload,
+  RecipeInstructions,
+  StockAlert,
+  ExpirationAlert,
+  AvailabilityCheck
+} from './kitchen';
 
-// Delivery-specific types
-export * from './delivery';
+// Delivery types (excluding conflicting DeliveryStatus and DELIVERY_STATUS_LABELS)
+export type {
+  GeoLocation,
+  VehicleType,
+  AgentStatus,
+  DeliveryZone,
+  NavigationStep,
+  TrafficData,
+  Route,
+  DeliveryAgent,
+  DeliveryIssue,
+  DeliveryConfirmation,
+  Address,
+  Delivery,
+  TimePeriod,
+  DeliveryMetrics,
+  AgentPerformance,
+  DeliveryFilters,
+  RouteConstraints
+} from './delivery';
+
+// Re-export Zod for consumers
+export { z } from 'zod';
