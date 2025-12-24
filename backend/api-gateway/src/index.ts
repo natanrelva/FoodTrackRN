@@ -8,17 +8,33 @@ import { DatabaseConnection } from '@foodtrack/backend-shared';
 
 // Import routes
 import productsRouter from './routes/products';
+import ordersRouter from './routes/orders';
+import kitchenRouter from './routes/kitchen';
+import websocketRouter from './routes/websocket';
+
+// Import WebSocket services
+import { WebSocketService } from './services/WebSocketService';
+import { WebSocketHandlers } from './handlers/websocketHandlers';
+import { websocketAuthMiddleware } from './middleware/websocketAuth';
 
 const app = express();
 const server = createServer(app);
 const io = new SocketIOServer(server, {
   cors: {
     origin: ["http://localhost:3000", "http://localhost:3001", "http://localhost:3002", "http://localhost:3003"],
-    methods: ["GET", "POST", "PUT", "DELETE"]
-  }
+    methods: ["GET", "POST", "PUT", "DELETE"],
+    credentials: true
+  },
+  transports: ['websocket', 'polling'],
+  pingTimeout: 60000,
+  pingInterval: 25000
 });
 
-const PORT = process.env.PORT || 4000;
+// Initialize WebSocket services
+let webSocketService: WebSocketService;
+let webSocketHandlers: WebSocketHandlers;
+
+const PORT = process.env.PORT || 4001;
 
 // Middleware
 app.use(helmet());
@@ -57,6 +73,9 @@ app.get('/api', (req, res) => {
     endpoints: {
       health: '/health',
       products: '/api/products',
+      orders: '/api/orders',
+      kitchen: '/api/kitchen',
+      websocket: '/api/websocket',
       api: '/api'
     }
   });
@@ -64,25 +83,30 @@ app.get('/api', (req, res) => {
 
 // API Routes
 app.use('/api/products', productsRouter);
+app.use('/api/orders', ordersRouter);
+app.use('/api/kitchen', kitchenRouter);
+app.use('/api/websocket', websocketRouter);
 
-// WebSocket connection handling
+// WebSocket connection handling with authentication
+io.use(websocketAuthMiddleware);
+
 io.on('connection', (socket) => {
-  console.log(`Client connected: ${socket.id}`);
+  console.log(`🔌 Client connected: ${socket.id}`);
   
-  socket.on('disconnect', () => {
-    console.log(`Client disconnected: ${socket.id}`);
+  // Setup all WebSocket handlers for this socket
+  if (webSocketHandlers) {
+    webSocketHandlers.setupAllHandlers(socket);
+  }
+  
+  socket.on('disconnect', (reason) => {
+    console.log(`🔌 Client disconnected: ${socket.id} - ${reason}`);
   });
   
-  // Kitchen subscriptions
-  socket.on('kitchen:subscribe', (tenantId: string) => {
-    socket.join(`kitchen:${tenantId}`);
-    console.log(`Kitchen subscribed to tenant: ${tenantId}`);
-  });
-  
-  // Order subscriptions
-  socket.on('order:subscribe', (orderId: string) => {
-    socket.join(`order:${orderId}`);
-    console.log(`Subscribed to order: ${orderId}`);
+  // Send welcome message
+  socket.emit('connected', {
+    message: 'Connected to FoodTrack WebSocket',
+    socketId: socket.id,
+    timestamp: new Date().toISOString()
   });
 });
 
@@ -115,11 +139,20 @@ DatabaseConnection.testConnection()
     if (connected) {
       console.log('✅ Database connection successful');
       
+      // Initialize WebSocket services after database connection
+      webSocketService = new WebSocketService(io);
+      webSocketHandlers = new WebSocketHandlers(webSocketService);
+      
       server.listen(PORT, () => {
-        console.log('🔌 WebSocket server initialized');
+        console.log('🔌 WebSocket server initialized with authentication');
         console.log(`🚀 API Gateway running on port ${PORT}`);
         console.log(`📊 Health check: http://localhost:${PORT}/health`);
-        console.log('🔌 WebSocket server ready for kitchen connections');
+        console.log('🔌 WebSocket server ready for real-time communication');
+        console.log('📡 WebSocket endpoints:');
+        console.log('  - Kitchen: kitchen:subscribe, kitchen:get_orders, kitchen:update_order_status');
+        console.log('  - Orders: order:subscribe, order:get_details, order:update_status');
+        console.log('  - Tenant: tenant:subscribe, tenant:get_stats, tenant:get_kitchen_status');
+        console.log('  - Customer: customer:subscribe, customer:track_order');
       });
     } else {
       console.error('❌ Database connection failed');
@@ -140,4 +173,4 @@ process.on('SIGTERM', () => {
   });
 });
 
-export { app, server, io };
+export { app, server, io, webSocketService };

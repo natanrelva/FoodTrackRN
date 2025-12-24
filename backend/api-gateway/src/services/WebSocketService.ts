@@ -1,296 +1,407 @@
-import { Server as SocketIOServer } from 'socket.io';
-import { Server as HTTPServer } from 'http';
-import jwt from 'jsonwebtoken';
-import { JWTPayload } from '@foodtrack/backend-shared';
+import { Server as SocketIOServer, Socket } from 'socket.io';
+import { EventBus, EventHandler } from '@foodtrack/backend-shared';
+import { DomainEvent } from '@foodtrack/types';
 
-export interface KitchenWebSocketEvents {
-  // Outgoing events (server to client)
-  'order:new': (data: NewOrderData) => void;
-  'order:modified': (data: OrderModification) => void;
-  'order:status-update': (data: OrderStatusUpdate) => void;
-  'inventory:low-stock': (data: LowStockAlert) => void;
-  'inventory:usage-update': (data: InventoryUsage) => void;
-  'station:assignment': (data: StationAssignment) => void;
-  'station:help-request': (data: HelpRequest) => void;
-  'quality:issue-reported': (data: QualityIssueReport) => void;
-  
-  // Incoming events (client to server)
-  'order:update-status': (data: { orderId: string; status: string; stationId?: string }) => void;
-  'inventory:update-usage': (data: { ingredientId: string; quantity: number; orderId: string }) => void;
-  'station:request-help': (data: { stationId: string; helpType: string; message?: string }) => void;
-  'quality:report-issue': (data: { orderId: string; issue: string; severity: string }) => void;
+export interface WebSocketConnection {
+  id: string;
+  tenantId?: string;
+  userId?: string;
+  userType?: 'customer' | 'kitchen' | 'tenant' | 'admin';
+  rooms: string[];
+  connectedAt: Date;
 }
 
-export interface NewOrderData {
-  orderId: string;
-  tenantId: string;
-  items: Array<{
-    id: string;
-    name: string;
-    quantity: number;
-    specialInstructions?: string;
-    allergens?: string[];
-  }>;
-  priority: 'low' | 'medium' | 'high' | 'urgent';
-  estimatedCompletionTime: string;
-  customerInfo?: {
-    name?: string;
-    phone?: string;
-  };
-}
+export class WebSocketService implements EventHandler {
+  private connections = new Map<string, WebSocketConnection>();
+  private eventBus: EventBus;
 
-export interface OrderModification {
-  orderId: string;
-  tenantId: string;
-  changes: {
-    items?: Array<{ id: string; action: 'add' | 'remove' | 'modify'; details: any }>;
-    specialInstructions?: string;
-    priority?: 'low' | 'medium' | 'high' | 'urgent';
-  };
-  reason: string;
-}
-
-export interface OrderStatusUpdate {
-  orderId: string;
-  tenantId: string;
-  status: string;
-  stationId?: string;
-  timestamp: string;
-  estimatedCompletionTime?: string;
-}
-
-export interface LowStockAlert {
-  tenantId: string;
-  ingredientId: string;
-  ingredientName: string;
-  currentStock: number;
-  minimumStock: number;
-  unit: string;
-  severity: 'warning' | 'critical';
-}
-
-export interface InventoryUsage {
-  tenantId: string;
-  ingredientId: string;
-  ingredientName: string;
-  quantityUsed: number;
-  remainingStock: number;
-  unit: string;
-  orderId: string;
-  timestamp: string;
-}
-
-export interface StationAssignment {
-  tenantId: string;
-  orderId: string;
-  stationId: string;
-  stationName: string;
-  assignedItems: string[];
-  estimatedTime: number;
-  priority: number;
-}
-
-export interface HelpRequest {
-  tenantId: string;
-  stationId: string;
-  stationName: string;
-  helpType: 'technical' | 'ingredient' | 'quality' | 'general';
-  message?: string;
-  requestedBy: string;
-  timestamp: string;
-  status: 'pending' | 'acknowledged' | 'resolved';
-}
-
-export interface QualityIssueReport {
-  tenantId: string;
-  orderId: string;
-  stationId: string;
-  issue: string;
-  severity: 'minor' | 'major' | 'critical';
-  reportedBy: string;
-  timestamp: string;
-  requiresRemake: boolean;
-}
-
-class WebSocketService {
-  private io: SocketIOServer | null = null;
-  private connectedClients = new Map<string, { socket: any; tenantId: string; userId: string }>();
-
-  initialize(server: HTTPServer): void {
-    this.io = new SocketIOServer(server, {
-      cors: {
-        origin: process.env.ALLOWED_ORIGINS?.split(',') || ['http://localhost:3003'],
-        methods: ['GET', 'POST'],
-        credentials: true,
-      },
-      transports: ['websocket', 'polling'],
-    });
-
-    this.io.use(this.authenticateSocket.bind(this));
-    this.io.on('connection', this.handleConnection.bind(this));
-
-    console.log('🔌 WebSocket server initialized');
+  constructor(private io: SocketIOServer) {
+    this.eventBus = EventBus.getInstance();
+    this.setupEventHandlers();
+    this.setupSocketHandlers();
   }
 
-  private async authenticateSocket(socket: any, next: (err?: Error) => void): Promise<void> {
-    try {
-      const token = socket.handshake.auth.token || socket.handshake.headers.authorization?.replace('Bearer ', '');
+  private setupEventHandlers(): void {
+    // Subscribe to all domain events to broadcast them
+    this.eventBus.subscribe('OrderCreated', this);
+    this.eventBus.subscribe('OrderConfirmed', this);
+    this.eventBus.subscribe('OrderStatusUpdated', this);
+    this.eventBus.subscribe('OrderCancelled', this);
+    this.eventBus.subscribe('ProductionContractCreated', this);
+    this.eventBus.subscribe('KitchenOrderCreated', this);
+    this.eventBus.subscribe('KitchenOrderStatusChanged', this);
+    this.eventBus.subscribe('IngredientConsumed', this);
+  }
+
+  private setupSocketHandlers(): void {
+    this.io.on('connection', (socket: Socket) => {
+      console.log(`🔌 WebSocket client connected: ${socket.id}`);
       
-      if (!token) {
-        return next(new Error('Authentication token required'));
+      // Initialize connection
+      const connection: WebSocketConnection = {
+        id: socket.id,
+        rooms: [],
+        connectedAt: new Date()
+      };
+      this.connections.set(socket.id, connection);
+
+      // Authentication handler
+      socket.on('authenticate', (data: { tenantId?: string; userId?: string; userType?: string }) => {
+        this.handleAuthentication(socket, data);
+      });
+
+      // Room subscription handlers
+      socket.on('subscribe:tenant', (tenantId: string) => {
+        this.handleTenantSubscription(socket, tenantId);
+      });
+
+      socket.on('subscribe:kitchen', (tenantId: string) => {
+        this.handleKitchenSubscription(socket, tenantId);
+      });
+
+      socket.on('subscribe:order', (orderId: string) => {
+        this.handleOrderSubscription(socket, orderId);
+      });
+
+      socket.on('subscribe:customer', (customerId: string) => {
+        this.handleCustomerSubscription(socket, customerId);
+      });
+
+      // Unsubscribe handlers
+      socket.on('unsubscribe:tenant', (tenantId: string) => {
+        this.handleTenantUnsubscription(socket, tenantId);
+      });
+
+      socket.on('unsubscribe:kitchen', (tenantId: string) => {
+        this.handleKitchenUnsubscription(socket, tenantId);
+      });
+
+      socket.on('unsubscribe:order', (orderId: string) => {
+        this.handleOrderUnsubscription(socket, orderId);
+      });
+
+      // Heartbeat/ping handler
+      socket.on('ping', () => {
+        socket.emit('pong', { timestamp: new Date().toISOString() });
+      });
+
+      // Disconnect handler
+      socket.on('disconnect', (reason) => {
+        this.handleDisconnection(socket, reason);
+      });
+
+      // Error handler
+      socket.on('error', (error) => {
+        console.error(`🔌 WebSocket error for ${socket.id}:`, error);
+      });
+    });
+  }
+
+  private handleAuthentication(socket: Socket, data: { tenantId?: string; userId?: string; userType?: string }): void {
+    const connection = this.connections.get(socket.id);
+    if (!connection) return;
+
+    // Update connection with auth data
+    connection.tenantId = data.tenantId;
+    connection.userId = data.userId;
+    connection.userType = data.userType as any;
+
+    this.connections.set(socket.id, connection);
+
+    console.log(`🔐 Client ${socket.id} authenticated as ${data.userType} for tenant ${data.tenantId}`);
+    
+    socket.emit('authenticated', {
+      success: true,
+      tenantId: data.tenantId,
+      userId: data.userId,
+      userType: data.userType
+    });
+  }
+
+  private handleTenantSubscription(socket: Socket, tenantId: string): void {
+    const connection = this.connections.get(socket.id);
+    if (!connection) return;
+
+    const roomName = `tenant:${tenantId}`;
+    socket.join(roomName);
+    
+    if (!connection.rooms.includes(roomName)) {
+      connection.rooms.push(roomName);
+    }
+
+    console.log(`📊 Client ${socket.id} subscribed to tenant ${tenantId}`);
+    socket.emit('subscribed', { room: roomName, type: 'tenant' });
+  }
+
+  private handleKitchenSubscription(socket: Socket, tenantId: string): void {
+    const connection = this.connections.get(socket.id);
+    if (!connection) return;
+
+    const roomName = `kitchen:${tenantId}`;
+    socket.join(roomName);
+    
+    if (!connection.rooms.includes(roomName)) {
+      connection.rooms.push(roomName);
+    }
+
+    console.log(`👨‍🍳 Client ${socket.id} subscribed to kitchen ${tenantId}`);
+    socket.emit('subscribed', { room: roomName, type: 'kitchen' });
+  }
+
+  private handleOrderSubscription(socket: Socket, orderId: string): void {
+    const connection = this.connections.get(socket.id);
+    if (!connection) return;
+
+    const roomName = `order:${orderId}`;
+    socket.join(roomName);
+    
+    if (!connection.rooms.includes(roomName)) {
+      connection.rooms.push(roomName);
+    }
+
+    console.log(`📦 Client ${socket.id} subscribed to order ${orderId}`);
+    socket.emit('subscribed', { room: roomName, type: 'order' });
+  }
+
+  private handleCustomerSubscription(socket: Socket, customerId: string): void {
+    const connection = this.connections.get(socket.id);
+    if (!connection) return;
+
+    const roomName = `customer:${customerId}`;
+    socket.join(roomName);
+    
+    if (!connection.rooms.includes(roomName)) {
+      connection.rooms.push(roomName);
+    }
+
+    console.log(`👤 Client ${socket.id} subscribed to customer ${customerId}`);
+    socket.emit('subscribed', { room: roomName, type: 'customer' });
+  }
+
+  private handleTenantUnsubscription(socket: Socket, tenantId: string): void {
+    const roomName = `tenant:${tenantId}`;
+    socket.leave(roomName);
+    
+    const connection = this.connections.get(socket.id);
+    if (connection) {
+      connection.rooms = connection.rooms.filter(room => room !== roomName);
+    }
+
+    console.log(`📊 Client ${socket.id} unsubscribed from tenant ${tenantId}`);
+    socket.emit('unsubscribed', { room: roomName, type: 'tenant' });
+  }
+
+  private handleKitchenUnsubscription(socket: Socket, tenantId: string): void {
+    const roomName = `kitchen:${tenantId}`;
+    socket.leave(roomName);
+    
+    const connection = this.connections.get(socket.id);
+    if (connection) {
+      connection.rooms = connection.rooms.filter(room => room !== roomName);
+    }
+
+    console.log(`👨‍🍳 Client ${socket.id} unsubscribed from kitchen ${tenantId}`);
+    socket.emit('unsubscribed', { room: roomName, type: 'kitchen' });
+  }
+
+  private handleOrderUnsubscription(socket: Socket, orderId: string): void {
+    const roomName = `order:${orderId}`;
+    socket.leave(roomName);
+    
+    const connection = this.connections.get(socket.id);
+    if (connection) {
+      connection.rooms = connection.rooms.filter(room => room !== roomName);
+    }
+
+    console.log(`📦 Client ${socket.id} unsubscribed from order ${orderId}`);
+    socket.emit('unsubscribed', { room: roomName, type: 'order' });
+  }
+
+  private handleDisconnection(socket: Socket, reason: string): void {
+    console.log(`🔌 Client ${socket.id} disconnected: ${reason}`);
+    this.connections.delete(socket.id);
+  }
+
+  // EventHandler implementation - handle domain events and broadcast them
+  async handle(event: DomainEvent): Promise<void> {
+    try {
+      await this.broadcastEvent(event);
+    } catch (error) {
+      console.error('🔌 Error broadcasting event:', error);
+    }
+  }
+
+  private async broadcastEvent(event: DomainEvent): Promise<void> {
+    const { eventType, tenantId, payload } = event;
+
+    // Broadcast to tenant room
+    if (tenantId) {
+      this.io.to(`tenant:${tenantId}`).emit('domain_event', {
+        type: eventType,
+        tenantId,
+        payload,
+        timestamp: event.occurredAt
+      });
+    }
+
+    // Specific event handling
+    switch (eventType) {
+      case 'OrderCreated':
+      case 'OrderConfirmed':
+      case 'OrderStatusUpdated':
+      case 'OrderCancelled':
+        await this.handleOrderEvent(event);
+        break;
+
+      case 'KitchenOrderCreated':
+      case 'KitchenOrderStatusChanged':
+        await this.handleKitchenEvent(event);
+        break;
+
+      case 'ProductionContractCreated':
+        await this.handleProductionContractEvent(event);
+        break;
+
+      case 'IngredientConsumed':
+        await this.handleSupplyEvent(event);
+        break;
+    }
+  }
+
+  private async handleOrderEvent(event: DomainEvent): Promise<void> {
+    const { tenantId, payload } = event;
+    const orderId = payload.orderId;
+
+    // Broadcast to specific order room
+    if (orderId) {
+      this.io.to(`order:${orderId}`).emit('order_update', {
+        type: event.eventType,
+        orderId,
+        data: payload,
+        timestamp: event.occurredAt
+      });
+    }
+
+    // Broadcast to customer if available
+    if (payload.customerId) {
+      this.io.to(`customer:${payload.customerId}`).emit('order_update', {
+        type: event.eventType,
+        orderId,
+        data: payload,
+        timestamp: event.occurredAt
+      });
+    }
+
+    // Broadcast to tenant dashboard
+    if (tenantId) {
+      this.io.to(`tenant:${tenantId}`).emit('dashboard_update', {
+        type: 'order',
+        event: event.eventType,
+        data: payload,
+        timestamp: event.occurredAt
+      });
+    }
+  }
+
+  private async handleKitchenEvent(event: DomainEvent): Promise<void> {
+    const { tenantId, payload } = event;
+
+    // Broadcast to kitchen room
+    if (tenantId) {
+      this.io.to(`kitchen:${tenantId}`).emit('kitchen_update', {
+        type: event.eventType,
+        data: payload,
+        timestamp: event.occurredAt
+      });
+    }
+
+    // Also broadcast to order room if orderId is available
+    if (payload.orderId) {
+      this.io.to(`order:${payload.orderId}`).emit('kitchen_update', {
+        type: event.eventType,
+        data: payload,
+        timestamp: event.occurredAt
+      });
+    }
+  }
+
+  private async handleProductionContractEvent(event: DomainEvent): Promise<void> {
+    const { tenantId, payload } = event;
+
+    // Broadcast to kitchen room (production contracts are for kitchen)
+    if (tenantId) {
+      this.io.to(`kitchen:${tenantId}`).emit('production_contract_update', {
+        type: event.eventType,
+        data: payload,
+        timestamp: event.occurredAt
+      });
+    }
+  }
+
+  private async handleSupplyEvent(event: DomainEvent): Promise<void> {
+    const { tenantId, payload } = event;
+
+    // Broadcast to tenant dashboard for supply management
+    if (tenantId) {
+      this.io.to(`tenant:${tenantId}`).emit('supply_update', {
+        type: event.eventType,
+        data: payload,
+        timestamp: event.occurredAt
+      });
+    }
+  }
+
+  // Public methods for manual broadcasting
+  public broadcastToTenant(tenantId: string, event: string, data: any): void {
+    this.io.to(`tenant:${tenantId}`).emit(event, data);
+  }
+
+  public broadcastToKitchen(tenantId: string, event: string, data: any): void {
+    this.io.to(`kitchen:${tenantId}`).emit(event, data);
+  }
+
+  public broadcastToOrder(orderId: string, event: string, data: any): void {
+    this.io.to(`order:${orderId}`).emit(event, data);
+  }
+
+  public broadcastToCustomer(customerId: string, event: string, data: any): void {
+    this.io.to(`customer:${customerId}`).emit(event, data);
+  }
+
+  // Connection management
+  public getConnectionCount(): number {
+    return this.connections.size;
+  }
+
+  public getConnectionsByTenant(tenantId: string): WebSocketConnection[] {
+    return Array.from(this.connections.values()).filter(
+      conn => conn.tenantId === tenantId
+    );
+  }
+
+  public getConnectionStats(): {
+    total: number;
+    byUserType: Record<string, number>;
+    byTenant: Record<string, number>;
+  } {
+    const stats = {
+      total: this.connections.size,
+      byUserType: {} as Record<string, number>,
+      byTenant: {} as Record<string, number>
+    };
+
+    for (const connection of this.connections.values()) {
+      // Count by user type
+      if (connection.userType) {
+        stats.byUserType[connection.userType] = (stats.byUserType[connection.userType] || 0) + 1;
       }
 
-      const decoded = jwt.verify(token, process.env.JWT_SECRET!) as JWTPayload;
-      
-      socket.userId = decoded.userId;
-      socket.tenantId = decoded.tenantId;
-      socket.userRole = decoded.role;
-      
-      next();
-    } catch (error) {
-      next(new Error('Invalid authentication token'));
-    }
-  }
-
-  private handleConnection(socket: any): void {
-    const { userId, tenantId, userRole } = socket;
-    
-    console.log(`🔌 Kitchen client connected: ${userId} (tenant: ${tenantId})`);
-    
-    // Store client connection
-    this.connectedClients.set(socket.id, { socket, tenantId, userId });
-    
-    // Join tenant-specific room
-    socket.join(`tenant:${tenantId}`);
-    
-    // Join role-specific rooms if needed
-    if (userRole === 'kitchen_staff' || userRole === 'chef') {
-      socket.join(`kitchen:${tenantId}`);
+      // Count by tenant
+      if (connection.tenantId) {
+        stats.byTenant[connection.tenantId] = (stats.byTenant[connection.tenantId] || 0) + 1;
+      }
     }
 
-    // Handle incoming events
-    this.setupEventHandlers(socket);
-
-    socket.on('disconnect', () => {
-      console.log(`🔌 Kitchen client disconnected: ${userId}`);
-      this.connectedClients.delete(socket.id);
-    });
-  }
-
-  private setupEventHandlers(socket: any): void {
-    const { tenantId } = socket;
-
-    // Order status updates
-    socket.on('order:update-status', (data: { orderId: string; status: string; stationId?: string }) => {
-      this.broadcastToTenant(tenantId, 'order:status-update', {
-        orderId: data.orderId,
-        tenantId,
-        status: data.status,
-        stationId: data.stationId,
-        timestamp: new Date().toISOString(),
-      });
-    });
-
-    // Inventory usage updates
-    socket.on('inventory:update-usage', (data: { ingredientId: string; quantity: number; orderId: string }) => {
-      // This would typically trigger inventory calculations and alerts
-      // For now, we'll just broadcast the usage update
-      this.broadcastToTenant(tenantId, 'inventory:usage-update', {
-        tenantId,
-        ingredientId: data.ingredientId,
-        ingredientName: `Ingredient ${data.ingredientId}`, // Would be fetched from DB
-        quantityUsed: data.quantity,
-        remainingStock: 0, // Would be calculated
-        unit: 'units',
-        orderId: data.orderId,
-        timestamp: new Date().toISOString(),
-      });
-    });
-
-    // Station help requests
-    socket.on('station:request-help', (data: { stationId: string; helpType: string; message?: string }) => {
-      this.broadcastToTenant(tenantId, 'station:help-request', {
-        tenantId,
-        stationId: data.stationId,
-        stationName: `Station ${data.stationId}`, // Would be fetched from DB
-        helpType: data.helpType as any,
-        message: data.message,
-        requestedBy: socket.userId,
-        timestamp: new Date().toISOString(),
-        status: 'pending',
-      });
-    });
-
-    // Quality issue reports
-    socket.on('quality:report-issue', (data: { orderId: string; issue: string; severity: string }) => {
-      this.broadcastToTenant(tenantId, 'quality:issue-reported', {
-        tenantId,
-        orderId: data.orderId,
-        stationId: 'unknown', // Would be determined from context
-        issue: data.issue,
-        severity: data.severity as any,
-        reportedBy: socket.userId,
-        timestamp: new Date().toISOString(),
-        requiresRemake: data.severity === 'critical',
-      });
-    });
-  }
-
-  // Public methods for broadcasting events from other services
-
-  broadcastNewOrder(orderData: NewOrderData): void {
-    this.broadcastToTenant(orderData.tenantId, 'order:new', orderData);
-  }
-
-  broadcastOrderModification(modificationData: OrderModification): void {
-    this.broadcastToTenant(modificationData.tenantId, 'order:modified', modificationData);
-  }
-
-  broadcastOrderStatusUpdate(statusData: OrderStatusUpdate): void {
-    this.broadcastToTenant(statusData.tenantId, 'order:status-update', statusData);
-  }
-
-  broadcastLowStockAlert(alertData: LowStockAlert): void {
-    this.broadcastToTenant(alertData.tenantId, 'inventory:low-stock', alertData);
-  }
-
-  broadcastStationAssignment(assignmentData: StationAssignment): void {
-    this.broadcastToTenant(assignmentData.tenantId, 'station:assignment', assignmentData);
-  }
-
-  broadcastToTenant(tenantId: string, event: string, data: any): void {
-    if (!this.io) {
-      console.warn('WebSocket server not initialized');
-      return;
-    }
-
-    this.io.to(`tenant:${tenantId}`).emit(event, data);
-    console.log(`📡 Broadcasted ${event} to tenant ${tenantId}`);
-  }
-
-  private broadcastToTenantPrivate(tenantId: string, event: string, data: any): void {
-    this.broadcastToTenant(tenantId, event, data);
-  }
-
-  private broadcastToKitchen(tenantId: string, event: string, data: any): void {
-    if (!this.io) {
-      console.warn('WebSocket server not initialized');
-      return;
-    }
-
-    this.io.to(`kitchen:${tenantId}`).emit(event, data);
-    console.log(`📡 Broadcasted ${event} to kitchen staff in tenant ${tenantId}`);
-  }
-
-  getConnectedClients(tenantId?: string): number {
-    if (!tenantId) {
-      return this.connectedClients.size;
-    }
-    
-    return Array.from(this.connectedClients.values())
-      .filter(client => client.tenantId === tenantId)
-      .length;
+    return stats;
   }
 }
-
-export const webSocketService = new WebSocketService();

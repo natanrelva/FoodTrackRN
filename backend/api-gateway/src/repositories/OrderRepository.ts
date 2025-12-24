@@ -1,520 +1,87 @@
 import { Pool, PoolClient } from 'pg';
+import { DatabaseConnection, BaseRepository } from '@foodtrack/backend-shared';
 import { 
   Order, 
   OrderSchema, 
-  CreateOrderRequest,
-  OrderFilters, 
-  PaginatedOrders,
+  CreateOrderRequest, 
+  UpdateOrderStatusRequest, 
+  OrderFilters,
   OrderStatus,
-  ChannelType,
-  OrderMetrics
-} from '@foodtrack/backend-shared';
+  OrderNumberGenerator
+} from '../models/Order';
 
-const pool = new Pool({
-  host: process.env.DB_HOST || 'localhost',
-  port: parseInt(process.env.DB_PORT || '5432'),
-  database: process.env.DB_NAME || 'foodtrack',
-  user: process.env.DB_USER || 'postgres',
-  password: process.env.DB_PASSWORD || 'postgres',
-});
-
-export interface DateRange {
-  startDate: Date;
-  endDate: Date;
-}
-
-export interface ChannelMetrics {
-  channel: ChannelType;
-  orderCount: number;
-  revenue: number;
-  averageTicket: number;
-}
-
-export class OrderRepository {
-  private tableName = 'orders';
+export class OrderRepository extends BaseRepository<Order> {
+  constructor() {
+    super('orders');
+  }
 
   async findById(id: string, tenantId: string): Promise<Order | null> {
     const query = `
-      SELECT o.*, 
-             c.name as customer_name, 
-             c.email as customer_email, 
-             c.phone as customer_phone
+      SELECT 
+        o.id,
+        o.tenant_id as "tenantId",
+        o.number,
+        o.customer_id as "customerId",
+        c.name as customer_name,
+        c.phone as customer_phone,
+        c.email as customer_email,
+        c.address as customer_address,
+        o.items,
+        o.status,
+        o.channel,
+        o.payment,
+        o.delivery,
+        o.subtotal,
+        o.delivery_fee as "deliveryFee",
+        o.discount,
+        o.total,
+        o.notes,
+        o.created_at as "createdAt",
+        o.updated_at as "updatedAt"
       FROM orders o
       LEFT JOIN customers c ON o.customer_id = c.id
       WHERE o.id = $1 AND o.tenant_id = $2
     `;
     
     try {
-      const result = await pool.query(query, [id, tenantId]);
+      const result = await this.pool.query(query, [id, tenantId]);
       return result.rows[0] ? this.mapRowToOrder(result.rows[0]) : null;
     } catch (error) {
       throw new Error(`Failed to find order by id: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   }
 
-  async findAll(tenantId: string, filters: Partial<OrderFilters> = {}): Promise<PaginatedOrders> {
-    // Set default values for required fields
-    const normalizedFilters: OrderFilters = {
-      page: filters.page ?? 1,
-      limit: filters.limit ?? 20,
-      ...filters,
-    };
-    const { query, countQuery, values } = this.buildFilteredQuery(tenantId, normalizedFilters);
-    
-    try {
-      // Get total count
-      const countResult = await pool.query(countQuery, values.slice(0, -2)); // Remove LIMIT and OFFSET params
-      const total = parseInt(countResult.rows[0].count);
-      
-      // Get paginated results
-      const result = await pool.query(query, values);
-      const orders = result.rows.map(row => this.mapRowToOrder(row));
-      
-      const pages = Math.ceil(total / normalizedFilters.limit);
-      
-      return {
-        orders,
-        pagination: {
-          page: normalizedFilters.page,
-          limit: normalizedFilters.limit,
-          total,
-          pages,
-        },
-      };
-    } catch (error) {
-      throw new Error(`Failed to find orders: ${error instanceof Error ? error.message : 'Unknown error'}`);
-    }
-  }
-
-  async create(orderData: Omit<Order, 'id' | 'createdAt' | 'updatedAt'>): Promise<Order> {
-    const client = await pool.connect();
-    
-    try {
-      await client.query('BEGIN');
-      
-      const query = `
-        INSERT INTO orders (
-          tenant_id, number, customer_id, items, status, channel, 
-          payment, delivery, subtotal, delivery_fee, discount, total, notes
-        )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
-        RETURNING *
-      `;
-      
-      const values = [
-        orderData.tenantId,
-        orderData.number,
-        orderData.customerId,
-        JSON.stringify(orderData.items),
-        orderData.status,
-        orderData.channel,
-        JSON.stringify(orderData.payment),
-        JSON.stringify(orderData.delivery),
-        orderData.subtotal,
-        orderData.deliveryFee,
-        orderData.discount,
-        orderData.total,
-        orderData.notes || null,
-      ];
-      
-      const result = await client.query(query, values);
-      await client.query('COMMIT');
-      
-      return this.mapRowToOrder(result.rows[0]);
-    } catch (error) {
-      await client.query('ROLLBACK');
-      throw new Error(`Failed to create order: ${error instanceof Error ? error.message : 'Unknown error'}`);
-    } finally {
-      client.release();
-    }
-  }
-
-  async update(id: string, updates: Partial<Order>, tenantId: string): Promise<Order | null> {
-    const client = await pool.connect();
-    
-    try {
-      await client.query('BEGIN');
-      
-      const updateFields: string[] = [];
-      const values: any[] = [];
-      let paramIndex = 1;
-
-      // Build dynamic update query
-      Object.entries(updates).forEach(([key, value]) => {
-        if (value !== undefined && key !== 'id' && key !== 'createdAt' && key !== 'tenantId') {
-          const dbKey = this.camelToSnake(key);
-          updateFields.push(`${dbKey} = $${paramIndex}`);
-          
-          if (key === 'items' || key === 'payment' || key === 'delivery') {
-            values.push(JSON.stringify(value));
-          } else {
-            values.push(value);
-          }
-          paramIndex++;
-        }
-      });
-
-      if (updateFields.length === 0) {
-        await client.query('ROLLBACK');
-        return null;
-      }
-
-      updateFields.push(`updated_at = NOW()`);
-      
-      const query = `
-        UPDATE orders 
-        SET ${updateFields.join(', ')} 
-        WHERE id = $${paramIndex} AND tenant_id = $${paramIndex + 1}
-        RETURNING *
-      `;
-      
-      values.push(id, tenantId);
-      
-      const result = await client.query(query, values);
-      await client.query('COMMIT');
-      
-      return result.rows[0] ? this.mapRowToOrder(result.rows[0]) : null;
-    } catch (error) {
-      await client.query('ROLLBACK');
-      throw new Error(`Failed to update order: ${error instanceof Error ? error.message : 'Unknown error'}`);
-    } finally {
-      client.release();
-    }
-  }
-
-  async delete(id: string, tenantId: string): Promise<boolean> {
-    const query = 'DELETE FROM orders WHERE id = $1 AND tenant_id = $2';
-    
-    try {
-      const result = await pool.query(query, [id, tenantId]);
-      return (result.rowCount ?? 0) > 0;
-    } catch (error) {
-      throw new Error(`Failed to delete order: ${error instanceof Error ? error.message : 'Unknown error'}`);
-    }
-  }
-
-  // Business-specific queries
-  async findByStatus(status: OrderStatus, tenantId: string): Promise<Order[]> {
-    const query = `
-      SELECT o.*, 
-             c.name as customer_name, 
-             c.email as customer_email, 
-             c.phone as customer_phone
-      FROM orders o
-      LEFT JOIN customers c ON o.customer_id = c.id
-      WHERE o.status = $1 AND o.tenant_id = $2
-      ORDER BY o.created_at DESC
-    `;
-    
-    try {
-      const result = await pool.query(query, [status, tenantId]);
-      return result.rows.map(row => this.mapRowToOrder(row));
-    } catch (error) {
-      throw new Error(`Failed to find orders by status: ${error instanceof Error ? error.message : 'Unknown error'}`);
-    }
-  }
-
-  async findByChannel(channel: ChannelType, tenantId: string): Promise<Order[]> {
-    const query = `
-      SELECT o.*, 
-             c.name as customer_name, 
-             c.email as customer_email, 
-             c.phone as customer_phone
-      FROM orders o
-      LEFT JOIN customers c ON o.customer_id = c.id
-      WHERE o.channel = $1 AND o.tenant_id = $2
-      ORDER BY o.created_at DESC
-    `;
-    
-    try {
-      const result = await pool.query(query, [channel, tenantId]);
-      return result.rows.map(row => this.mapRowToOrder(row));
-    } catch (error) {
-      throw new Error(`Failed to find orders by channel: ${error instanceof Error ? error.message : 'Unknown error'}`);
-    }
-  }
-
-  async findByDateRange(startDate: Date, endDate: Date, tenantId: string): Promise<Order[]> {
-    const query = `
-      SELECT o.*, 
-             c.name as customer_name, 
-             c.email as customer_email, 
-             c.phone as customer_phone
-      FROM orders o
-      LEFT JOIN customers c ON o.customer_id = c.id
-      WHERE o.created_at >= $1 AND o.created_at <= $2 AND o.tenant_id = $3
-      ORDER BY o.created_at DESC
-    `;
-    
-    try {
-      const result = await pool.query(query, [startDate, endDate, tenantId]);
-      return result.rows.map(row => this.mapRowToOrder(row));
-    } catch (error) {
-      throw new Error(`Failed to find orders by date range: ${error instanceof Error ? error.message : 'Unknown error'}`);
-    }
-  }
-
-  async findDelayedOrders(tenantId: string): Promise<Order[]> {
-    // Orders that are preparing for more than 30 minutes or ready for more than 15 minutes
-    const query = `
-      SELECT o.*, 
-             c.name as customer_name, 
-             c.email as customer_email, 
-             c.phone as customer_phone
-      FROM orders o
-      LEFT JOIN customers c ON o.customer_id = c.id
-      WHERE o.tenant_id = $1 
-        AND (
-          (o.status = 'preparing' AND o.updated_at < NOW() - INTERVAL '30 minutes')
-          OR (o.status = 'ready' AND o.updated_at < NOW() - INTERVAL '15 minutes')
-        )
-      ORDER BY o.updated_at ASC
-    `;
-    
-    try {
-      const result = await pool.query(query, [tenantId]);
-      return result.rows.map(row => this.mapRowToOrder(row));
-    } catch (error) {
-      throw new Error(`Failed to find delayed orders: ${error instanceof Error ? error.message : 'Unknown error'}`);
-    }
-  }
-
-  // Analytics queries
-  async getOrderMetrics(tenantId: string, dateRange?: DateRange): Promise<OrderMetrics> {
-    let whereClause = 'WHERE tenant_id = $1';
-    const values: any[] = [tenantId];
-    
-    if (dateRange) {
-      whereClause += ' AND created_at >= $2 AND created_at <= $3';
-      values.push(dateRange.startDate, dateRange.endDate);
-    }
-    
-    const query = `
-      SELECT 
-        COUNT(*) as total_orders,
-        COALESCE(SUM(total), 0) as total_revenue,
-        COALESCE(AVG(total), 0) as average_ticket,
-        COUNT(CASE WHEN (
-          (status = 'preparing' AND updated_at < NOW() - INTERVAL '30 minutes')
-          OR (status = 'ready' AND updated_at < NOW() - INTERVAL '15 minutes')
-        ) THEN 1 END) as delayed_orders,
-        json_object_agg(status, status_count) as orders_by_status,
-        json_object_agg(channel, channel_count) as orders_by_channel
-      FROM (
-        SELECT 
-          status, channel, total, updated_at,
-          COUNT(*) OVER (PARTITION BY status) as status_count,
-          COUNT(*) OVER (PARTITION BY channel) as channel_count
-        FROM orders 
-        ${whereClause}
-      ) subquery
-    `;
-    
-    try {
-      const result = await pool.query(query, values);
-      const row = result.rows[0];
-      
-      return {
-        totalOrders: parseInt(row.total_orders),
-        totalRevenue: parseFloat(row.total_revenue),
-        averageTicket: parseFloat(row.average_ticket),
-        delayedOrders: parseInt(row.delayed_orders),
-        ordersByStatus: row.orders_by_status || {},
-        ordersByChannel: row.orders_by_channel || {},
-      };
-    } catch (error) {
-      throw new Error(`Failed to get order metrics: ${error instanceof Error ? error.message : 'Unknown error'}`);
-    }
-  }
-
-  async getChannelPerformance(tenantId: string, dateRange?: DateRange): Promise<ChannelMetrics[]> {
-    let whereClause = 'WHERE tenant_id = $1';
-    const values: any[] = [tenantId];
-    
-    if (dateRange) {
-      whereClause += ' AND created_at >= $2 AND created_at <= $3';
-      values.push(dateRange.startDate, dateRange.endDate);
-    }
-    
-    const query = `
-      SELECT 
-        channel,
-        COUNT(*) as order_count,
-        COALESCE(SUM(total), 0) as revenue,
-        COALESCE(AVG(total), 0) as average_ticket
-      FROM orders 
-      ${whereClause}
-      GROUP BY channel
-      ORDER BY revenue DESC
-    `;
-    
-    try {
-      const result = await pool.query(query, values);
-      return result.rows.map(row => ({
-        channel: row.channel as ChannelType,
-        orderCount: parseInt(row.order_count),
-        revenue: parseFloat(row.revenue),
-        averageTicket: parseFloat(row.average_ticket),
-      }));
-    } catch (error) {
-      throw new Error(`Failed to get channel performance: ${error instanceof Error ? error.message : 'Unknown error'}`);
-    }
-  }
-
-  // Order numbering system
-  async generateOrderNumber(tenantId: string): Promise<string> {
-    const query = 'SELECT get_next_order_number($1) as order_number';
-    
-    try {
-      const result = await pool.query(query, [tenantId]);
-      return result.rows[0].order_number;
-    } catch (error) {
-      throw new Error(`Failed to generate order number: ${error instanceof Error ? error.message : 'Unknown error'}`);
-    }
-  }
-
-  async getCurrentOrderNumber(tenantId: string): Promise<string> {
-    const query = 'SELECT get_current_order_number($1) as order_number';
-    
-    try {
-      const result = await pool.query(query, [tenantId]);
-      return result.rows[0].order_number;
-    } catch (error) {
-      throw new Error(`Failed to get current order number: ${error instanceof Error ? error.message : 'Unknown error'}`);
-    }
-  }
-
-  async resetOrderSequence(tenantId: string, startValue: number = 1001): Promise<void> {
-    const query = 'SELECT reset_order_sequence($1, $2)';
-    
-    try {
-      await pool.query(query, [tenantId, startValue]);
-    } catch (error) {
-      throw new Error(`Failed to reset order sequence: ${error instanceof Error ? error.message : 'Unknown error'}`);
-    }
-  }
-
-  async findByNumber(orderNumber: string, tenantId: string): Promise<Order | null> {
-    const query = `
-      SELECT o.*, 
-             c.name as customer_name, 
-             c.email as customer_email, 
-             c.phone as customer_phone
-      FROM orders o
-      LEFT JOIN customers c ON o.customer_id = c.id
-      WHERE o.number = $1 AND o.tenant_id = $2
-    `;
-    
-    try {
-      const result = await pool.query(query, [orderNumber, tenantId]);
-      return result.rows[0] ? this.mapRowToOrder(result.rows[0]) : null;
-    } catch (error) {
-      throw new Error(`Failed to find order by number: ${error instanceof Error ? error.message : 'Unknown error'}`);
-    }
-  }
-
-  async isOrderNumberExists(orderNumber: string, tenantId: string): Promise<boolean> {
-    const query = 'SELECT 1 FROM orders WHERE number = $1 AND tenant_id = $2 LIMIT 1';
-    
-    try {
-      const result = await pool.query(query, [orderNumber, tenantId]);
-      return result.rows.length > 0;
-    } catch (error) {
-      throw new Error(`Failed to check order number existence: ${error instanceof Error ? error.message : 'Unknown error'}`);
-    }
-  }
-
-  // Enhanced create method with automatic order number generation
-  async createWithAutoNumber(orderData: Omit<Order, 'id' | 'number' | 'createdAt' | 'updatedAt'>): Promise<Order> {
-    const client = await pool.connect();
-    
-    try {
-      await client.query('BEGIN');
-      
-      // Generate order number
-      const orderNumber = await this.generateOrderNumber(orderData.tenantId);
-      
-      const query = `
-        INSERT INTO orders (
-          tenant_id, number, customer_id, items, status, channel, 
-          payment, delivery, subtotal, delivery_fee, discount, total, notes
-        )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
-        RETURNING *
-      `;
-      
-      const values = [
-        orderData.tenantId,
-        orderNumber,
-        orderData.customerId,
-        JSON.stringify(orderData.items),
-        orderData.status,
-        orderData.channel,
-        JSON.stringify(orderData.payment),
-        JSON.stringify(orderData.delivery),
-        orderData.subtotal,
-        orderData.deliveryFee,
-        orderData.discount,
-        orderData.total,
-        orderData.notes || null,
-      ];
-      
-      const result = await client.query(query, values);
-      await client.query('COMMIT');
-      
-      return this.mapRowToOrder(result.rows[0]);
-    } catch (error) {
-      await client.query('ROLLBACK');
-      
-      // Handle unique constraint violation (order number conflict)
-      if (error instanceof Error && error.message.includes('unique_tenant_order_number')) {
-        throw new Error('Order number conflict detected. Please retry the operation.');
-      }
-      
-      throw new Error(`Failed to create order with auto number: ${error instanceof Error ? error.message : 'Unknown error'}`);
-    } finally {
-      client.release();
-    }
-  }
-
-  // Helper methods
-  private buildFilteredQuery(tenantId: string, filters: OrderFilters): { query: string; countQuery: string; values: any[] } {
+  async findAll(tenantId: string, filters: OrderFilters = {}): Promise<{ orders: Order[]; total: number }> {
     const conditions: string[] = ['o.tenant_id = $1'];
     const values: any[] = [tenantId];
     let paramIndex = 2;
 
-    // Status filter
-    if (filters.status && filters.status.length > 0) {
-      const statusPlaceholders = filters.status.map(() => `$${paramIndex++}`).join(', ');
-      conditions.push(`o.status IN (${statusPlaceholders})`);
-      values.push(...filters.status);
+    // Build WHERE conditions
+    if (filters.status) {
+      conditions.push(`o.status = $${paramIndex++}`);
+      values.push(filters.status);
     }
 
-    // Channel filter
-    if (filters.channel && filters.channel.length > 0) {
-      const channelPlaceholders = filters.channel.map(() => `$${paramIndex++}`).join(', ');
-      conditions.push(`o.channel IN (${channelPlaceholders})`);
-      values.push(...filters.channel);
+    if (filters.channel) {
+      conditions.push(`o.channel = $${paramIndex++}`);
+      values.push(filters.channel);
     }
 
-    // Date range filter
-    if (filters.dateFrom) {
-      conditions.push(`o.created_at >= $${paramIndex++}`);
-      values.push(filters.dateFrom);
-    }
-
-    if (filters.dateTo) {
-      conditions.push(`o.created_at <= $${paramIndex++}`);
-      values.push(filters.dateTo);
-    }
-
-    // Customer filter
     if (filters.customerId) {
       conditions.push(`o.customer_id = $${paramIndex++}`);
       values.push(filters.customerId);
     }
 
-    // Search filter
+    if (filters.dateFrom) {
+      conditions.push(`o.created_at >= $${paramIndex++}`);
+      values.push(new Date(filters.dateFrom));
+    }
+
+    if (filters.dateTo) {
+      conditions.push(`o.created_at <= $${paramIndex++}`);
+      values.push(new Date(filters.dateTo));
+    }
+
     if (filters.search) {
       conditions.push(`(o.number ILIKE $${paramIndex} OR c.name ILIKE $${paramIndex})`);
       values.push(`%${filters.search}%`);
@@ -523,61 +90,332 @@ export class OrderRepository {
 
     const whereClause = `WHERE ${conditions.join(' AND ')}`;
     
-    const baseQuery = `
+    // Count query
+    const countQuery = `
+      SELECT COUNT(*) 
       FROM orders o
       LEFT JOIN customers c ON o.customer_id = c.id
       ${whereClause}
     `;
+    const countResult = await this.pool.query(countQuery, values);
+    const total = parseInt(countResult.rows[0].count);
 
-    const countQuery = `SELECT COUNT(*) ${baseQuery}`;
-    
-    // Add pagination
-    const offset = (filters.page - 1) * filters.limit;
-    values.push(filters.limit, offset);
-    
+    // Main query with pagination
+    const offset = ((filters.page || 1) - 1) * (filters.limit || 20);
     const query = `
-      SELECT o.*, 
-             c.name as customer_name, 
-             c.email as customer_email, 
-             c.phone as customer_phone
-      ${baseQuery}
+      SELECT 
+        o.id,
+        o.tenant_id as "tenantId",
+        o.number,
+        o.customer_id as "customerId",
+        c.name as customer_name,
+        c.phone as customer_phone,
+        c.email as customer_email,
+        c.address as customer_address,
+        o.items,
+        o.status,
+        o.channel,
+        o.payment,
+        o.delivery,
+        o.subtotal,
+        o.delivery_fee as "deliveryFee",
+        o.discount,
+        o.total,
+        o.notes,
+        o.created_at as "createdAt",
+        o.updated_at as "updatedAt"
+      FROM orders o
+      LEFT JOIN customers c ON o.customer_id = c.id
+      ${whereClause}
       ORDER BY o.created_at DESC
       LIMIT $${paramIndex++} OFFSET $${paramIndex++}
     `;
+    
+    values.push(filters.limit || 20, offset);
 
-    return { query, countQuery, values };
+    try {
+      const result = await this.pool.query(query, values);
+      const orders = result.rows.map(row => this.mapRowToOrder(row));
+      return { orders, total };
+    } catch (error) {
+      throw new Error(`Failed to find orders: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
   }
 
+  async create(data: CreateOrderRequest & { tenantId: string }): Promise<Order> {
+    const client = await this.pool.connect();
+    
+    try {
+      await client.query('BEGIN');
+      
+      // Generate order number
+      const orderNumber = OrderNumberGenerator.generate(data.tenantId);
+      
+      // Create or find customer
+      let customerId: string;
+      const existingCustomer = await client.query(
+        'SELECT id FROM customers WHERE tenant_id = $1 AND phone = $2',
+        [data.tenantId, data.customer.phone]
+      );
+      
+      if (existingCustomer.rows.length > 0) {
+        customerId = existingCustomer.rows[0].id;
+        
+        // Update customer info
+        await client.query(`
+          UPDATE customers 
+          SET name = $1, email = $2, address = $3, updated_at = NOW()
+          WHERE id = $4
+        `, [
+          data.customer.name,
+          data.customer.email || null,
+          JSON.stringify({ street: data.customer.address }),
+          customerId
+        ]);
+      } else {
+        // Create new customer
+        const customerResult = await client.query(`
+          INSERT INTO customers (tenant_id, name, email, phone, address)
+          VALUES ($1, $2, $3, $4, $5)
+          RETURNING id
+        `, [
+          data.tenantId,
+          data.customer.name,
+          data.customer.email || null,
+          data.customer.phone,
+          JSON.stringify({ street: data.customer.address })
+        ]);
+        customerId = customerResult.rows[0].id;
+      }
+
+      // Get product details and calculate totals
+      const productIds = data.items.map(item => item.productId);
+      const productsResult = await client.query(
+        'SELECT id, name, price FROM products WHERE id = ANY($1) AND tenant_id = $2 AND active = true',
+        [productIds, data.tenantId]
+      );
+      
+      const products = new Map(productsResult.rows.map(p => [p.id, p]));
+      
+      // Build order items with product details
+      const orderItems = data.items.map(item => {
+        const product = products.get(item.productId);
+        if (!product) {
+          throw new Error(`Product ${item.productId} not found or not available`);
+        }
+        
+        return {
+          id: item.productId,
+          name: product.name,
+          quantity: item.quantity,
+          price: parseFloat(product.price),
+          extras: [],
+          modifications: item.modifications,
+        };
+      });
+
+      // Calculate totals
+      const subtotal = orderItems.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+      const deliveryFee = data.delivery.fee || 0;
+      const discount = 0; // TODO: Implement discount logic
+      const total = subtotal + deliveryFee - discount;
+
+      // Create order
+      const orderQuery = `
+        INSERT INTO orders (
+          tenant_id, number, customer_id, items, status, channel, 
+          payment, delivery, subtotal, delivery_fee, discount, total, notes
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+        RETURNING 
+          id,
+          tenant_id as "tenantId",
+          number,
+          customer_id as "customerId",
+          items,
+          status,
+          channel,
+          payment,
+          delivery,
+          subtotal,
+          delivery_fee as "deliveryFee",
+          discount,
+          total,
+          notes,
+          created_at as "createdAt",
+          updated_at as "updatedAt"
+      `;
+      
+      const orderValues = [
+        data.tenantId,
+        orderNumber,
+        customerId,
+        JSON.stringify(orderItems),
+        'draft', // Initial status
+        data.channel,
+        JSON.stringify({
+          method: data.payment.method,
+          status: 'pending',
+          amount: total,
+        }),
+        JSON.stringify(data.delivery),
+        subtotal,
+        deliveryFee,
+        discount,
+        total,
+        data.notes || null,
+      ];
+      
+      const orderResult = await client.query(orderQuery, orderValues);
+      await client.query('COMMIT');
+      
+      // Get customer info for response
+      const customerInfo = await client.query(
+        'SELECT name, phone, email FROM customers WHERE id = $1',
+        [customerId]
+      );
+      
+      const orderRow = {
+        ...orderResult.rows[0],
+        customer_name: customerInfo.rows[0].name,
+        customer_phone: customerInfo.rows[0].phone,
+        customer_email: customerInfo.rows[0].email,
+      };
+      
+      return this.mapRowToOrder(orderRow);
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw new Error(`Failed to create order: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    } finally {
+      client.release();
+    }
+  }
+
+  async updateStatus(id: string, status: OrderStatus, tenantId: string, notes?: string): Promise<Order | null> {
+    const client = await this.pool.connect();
+    
+    try {
+      await client.query('BEGIN');
+      
+      const query = `
+        UPDATE orders 
+        SET status = $1, notes = COALESCE($2, notes), updated_at = NOW()
+        WHERE id = $3 AND tenant_id = $4
+        RETURNING 
+          id,
+          tenant_id as "tenantId",
+          number,
+          customer_id as "customerId",
+          items,
+          status,
+          channel,
+          payment,
+          delivery,
+          subtotal,
+          delivery_fee as "deliveryFee",
+          discount,
+          total,
+          notes,
+          created_at as "createdAt",
+          updated_at as "updatedAt"
+      `;
+      
+      const result = await client.query(query, [status, notes, id, tenantId]);
+      await client.query('COMMIT');
+      
+      if (result.rows.length === 0) {
+        return null;
+      }
+
+      // Get customer info
+      const customerInfo = await client.query(
+        'SELECT name, phone, email FROM customers WHERE id = $1',
+        [result.rows[0].customerId]
+      );
+      
+      const orderRow = {
+        ...result.rows[0],
+        customer_name: customerInfo.rows[0]?.name,
+        customer_phone: customerInfo.rows[0]?.phone,
+        customer_email: customerInfo.rows[0]?.email,
+      };
+      
+      return this.mapRowToOrder(orderRow);
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw new Error(`Failed to update order status: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    } finally {
+      client.release();
+    }
+  }
+
+  async delete(id: string, tenantId: string): Promise<boolean> {
+    // Soft delete by setting status to cancelled
+    const result = await this.updateStatus(id, 'cancelled', tenantId, 'Order cancelled');
+    return result !== null;
+  }
+
+  async findByStatus(status: OrderStatus, tenantId: string): Promise<Order[]> {
+    const { orders } = await this.findAll(tenantId, { status });
+    return orders;
+  }
+
+  async findByCustomer(customerId: string, tenantId: string): Promise<Order[]> {
+    const { orders } = await this.findAll(tenantId, { customerId });
+    return orders;
+  }
+
+  // Helper methods
   private mapRowToOrder(row: any): Order {
+    // Extract address from customer address object
+    let customerAddress = 'Endereço não informado';
+    if (row.customer_address) {
+      try {
+        const addressObj = typeof row.customer_address === 'string' 
+          ? JSON.parse(row.customer_address) 
+          : row.customer_address;
+        customerAddress = addressObj.street || addressObj.address || 'Endereço não informado';
+      } catch (e) {
+        customerAddress = row.customer_address.toString();
+      }
+    }
+
+    const customer = {
+      name: row.customer_name || 'Cliente',
+      phone: row.customer_phone || '',
+      email: row.customer_email || undefined,
+      address: customerAddress,
+    };
+
+    // Map database status to schema status
+    let status = row.status;
+    if (status === 'pending') {
+      status = 'draft'; // Map pending to draft
+    }
+    if (status === 'preparing') {
+      status = 'in_preparation'; // Map preparing to in_preparation
+    }
+
     return OrderSchema.parse({
       id: row.id,
-      tenantId: row.tenant_id,
+      tenantId: row.tenantId,
       number: row.number,
-      customerId: row.customer_id,
-      customer: row.customer_name ? {
-        id: row.customer_id,
-        name: row.customer_name,
-        email: row.customer_email || undefined,
-        phone: row.customer_phone,
-      } : undefined,
+      customerId: row.customerId,
+      customer,
       items: typeof row.items === 'string' ? JSON.parse(row.items) : row.items,
-      status: row.status,
+      status,
       channel: row.channel,
       payment: typeof row.payment === 'string' ? JSON.parse(row.payment) : row.payment,
       delivery: typeof row.delivery === 'string' ? JSON.parse(row.delivery) : row.delivery,
       subtotal: parseFloat(row.subtotal),
-      deliveryFee: parseFloat(row.delivery_fee),
-      discount: parseFloat(row.discount),
+      deliveryFee: parseFloat(row.deliveryFee || 0),
+      discount: parseFloat(row.discount || 0),
       total: parseFloat(row.total),
       notes: row.notes || undefined,
-      estimatedCompletionTime: row.estimated_completion_time ? new Date(row.estimated_completion_time) : undefined,
-      actualCompletionTime: row.actual_completion_time ? new Date(row.actual_completion_time) : undefined,
-      createdAt: new Date(row.created_at),
-      updatedAt: new Date(row.updated_at),
+      specialInstructions: row.specialInstructions || undefined,
+      estimatedDeliveryTime: row.estimatedDeliveryTime ? new Date(row.estimatedDeliveryTime) : undefined,
+      createdAt: new Date(row.createdAt),
+      updatedAt: new Date(row.updatedAt),
     });
-  }
-
-  private camelToSnake(str: string): string {
-    return str.replace(/[A-Z]/g, letter => `_${letter.toLowerCase()}`);
   }
 }

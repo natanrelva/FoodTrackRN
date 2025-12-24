@@ -5,7 +5,15 @@ export interface EventHandler<T extends DomainEvent = DomainEvent> {
 }
 
 export class EventBus {
+  private static instance: EventBus;
   private handlers = new Map<string, EventHandler[]>();
+
+  static getInstance(): EventBus {
+    if (!EventBus.instance) {
+      EventBus.instance = new EventBus();
+    }
+    return EventBus.instance;
+  }
 
   subscribe<T extends DomainEvent>(eventType: string, handler: EventHandler<T>): void {
     if (!this.handlers.has(eventType)) {
@@ -14,19 +22,23 @@ export class EventBus {
     this.handlers.get(eventType)!.push(handler as EventHandler);
   }
 
-  async publish(events: DomainEvent[]): Promise<void> {
+  async publish(event: DomainEvent): Promise<void> {
+    const handlers = this.handlers.get(event.eventType) || [];
+    
+    // Execute handlers in parallel
+    await Promise.all(
+      handlers.map(handler => 
+        handler.handle(event).catch(error => {
+          console.error(`Error handling event ${event.eventType}:`, error);
+          // In production, you might want to implement retry logic or dead letter queue
+        })
+      )
+    );
+  }
+
+  async publishMany(events: DomainEvent[]): Promise<void> {
     for (const event of events) {
-      const handlers = this.handlers.get(event.eventType) || [];
-      
-      // Execute handlers in parallel
-      await Promise.all(
-        handlers.map(handler => 
-          handler.handle(event).catch(error => {
-            console.error(`Error handling event ${event.eventType}:`, error);
-            // In production, you might want to implement retry logic or dead letter queue
-          })
-        )
-      );
+      await this.publish(event);
     }
   }
 
@@ -111,5 +123,5 @@ export class EventStore {
   }
 }
 
-// Singleton instances
-export const eventBus = new EventBus();
+// Export kitchen events
+export * from './events/KitchenEvents';
