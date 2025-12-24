@@ -5,10 +5,11 @@
   "printWidth": 100,
   "tabWidth": 2,
   "useTabs": false,
-  "quoteProps": "as-needed",
   "bracketSpacing": true,
   "bracketSameLine": false,
   "arrowParens": "avoid",
   "endOfLine": "lf",
-  "embeddedLanguageFormatting": "auto"
+  "quoteProps": "as-needed",
+  "jsxSingleQuote": true,
+  "proseWrap": "preserve"
 }

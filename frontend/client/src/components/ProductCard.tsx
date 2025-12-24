@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Plus, X } from 'lucide-react';
 import { useCart } from '../contexts/CartContext';
-import { toast } from 'sonner@2.0.3';
+import { toast } from 'sonner';
 import { ProductCardProps } from '@foodtrack/types';
 
 export function ProductCard({ product }: ProductCardProps) {

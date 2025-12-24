@@ -1,5 +1,8 @@
 # 🚢 Guia de Deploy - FoodTrack
 
+**Versão:** 1.1  
+**Última Atualização:** 23 de Dezembro de 2024
+
 ## Ambientes
 
 ### Development (Local)

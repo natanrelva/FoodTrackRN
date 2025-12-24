@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { ArrowLeft, CreditCard, QrCode, MapPin, Check } from 'lucide-react';
 import { useCart } from '../contexts/CartContext';
 import { WebScreen } from '@foodtrack/types';
-import { toast } from 'sonner@2.0.3';
+import { toast } from 'sonner';
 
 import { CheckoutScreenProps } from '@foodtrack/types';
 

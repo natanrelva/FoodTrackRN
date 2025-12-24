@@ -8,7 +8,6 @@ import { RecipeDisplay } from './RecipeDisplay';
 import { QualityStandards } from './QualityStandards';
 import { RecipeModifications } from './RecipeModifications';
 import { RecipeModal } from './RecipeModal';
-import { RecipeQuickView } from './RecipeQuickView';
 import { KitchenOrderItem } from '../types/kitchen';
 
 interface RecipeManagementProps {

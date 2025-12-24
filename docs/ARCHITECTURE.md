@@ -1,5 +1,8 @@
 # 🏗️ Arquitetura do Sistema FoodTrack
 
+**Versão:** 1.1  
+**Última Atualização:** 23 de Dezembro de 2024
+
 ## Visão Geral
 
 O FoodTrack é construído como um **monorepo multi-tenant** com arquitetura **modular integrada**, utilizando **TypeScript** em todo o stack para garantir type safety e consistência entre todas as aplicações.

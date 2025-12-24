@@ -1,20 +1,58 @@
 {
   "name": "@foodtrack/types",
   "version": "1.0.0",
-  "description": "Shared TypeScript types for FoodTrack applications",
+  "description": "Shared TypeScript types and interfaces for FoodTrack",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsc",
-    "dev": "tsc --watch"
+    "dev": "tsc --watch",
+    "clean": "rm -rf dist",
+    "type-check": "tsc --noEmit",
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "test:coverage": "jest --coverage"
   },
   "dependencies": {
-    "zod": "^3.25.76"
+    "zod": "^3.22.4"
   },
   "devDependencies": {
-    "typescript": "^5.0.0"
+    "@types/jest": "^29.5.8",
+    "jest": "^29.7.0",
+    "ts-jest": "^29.1.1",
+    "typescript": "^5.3.0"
   },
-  "peerDependencies": {
-    "react": "^18.0.0"
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.js"
+    },
+    "./order": {
+      "types": "./dist/order/index.d.ts",
+      "import": "./dist/order/index.js",
+      "require": "./dist/order/index.js"
+    },
+    "./product": {
+      "types": "./dist/product/index.d.ts",
+      "import": "./dist/product/index.js",
+      "require": "./dist/product/index.js"
+    },
+    "./kitchen": {
+      "types": "./dist/kitchen/index.d.ts",
+      "import": "./dist/kitchen/index.js",
+      "require": "./dist/kitchen/index.js"
+    },
+    "./events": {
+      "types": "./dist/events/index.d.ts",
+      "import": "./dist/events/index.js",
+      "require": "./dist/events/index.js"
+    }
+  },
+  "publishConfig": {
+    "access": "restricted"
   }
 }

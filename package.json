@@ -1,45 +1,83 @@
 {
-  "name": "foodtrack-workspace",
+  "name": "foodtrack",
   "version": "1.0.0",
+  "description": "Restaurant Operating System (ROS) - Event-driven multi-tenant platform",
   "private": true,
-  "description": "Multi-tenant restaurant management system",
-  "scripts": {
-    "dev": "concurrently \"pnpm dev:api\" \"pnpm dev:client\" \"pnpm dev:tenant\" \"pnpm dev:kitchen\" \"pnpm dev:delivery\"",
-    "dev:api": "pnpm --filter @foodtrack/api-gateway dev",
-    "dev:client": "pnpm --filter @foodtrack/client dev",
-    "dev:tenant": "pnpm --filter @foodtrack/tenant dev",
-    "dev:kitchen": "pnpm --filter @foodtrack/kitchen dev",
-    "dev:delivery": "pnpm --filter @foodtrack/delivery dev",
-    "build": "pnpm build:types && pnpm build:shared && pnpm -r build",
-    "build:types": "pnpm --filter @foodtrack/types build",
-    "build:shared": "pnpm --filter @foodtrack/backend-shared build",
-    "migrate": "pnpm --filter @foodtrack/migrations migrate",
-    "setup": "pnpm install && pnpm build:types && pnpm build:shared",
-    "lint": "eslint . --ext .ts,.tsx --max-warnings 0",
-    "lint:fix": "eslint . --ext .ts,.tsx --fix",
-    "type-check": "pnpm -r type-check",
-    "test": "pnpm -r test",
-    "test:watch": "pnpm -r test:watch",
-    "test:coverage": "pnpm -r test:coverage",
-    "clean": "pnpm -r clean && rm -rf node_modules",
-    "reset": "pnpm clean && pnpm install && pnpm setup",
-    "docker:up": "docker-compose -f docker-compose.dev.yml up -d",
-    "docker:down": "docker-compose -f docker-compose.dev.yml down",
-    "docker:logs": "docker-compose -f docker-compose.dev.yml logs -f",
-    "db:reset": "docker-compose -f docker-compose.dev.yml down -v && docker-compose -f docker-compose.dev.yml up -d && sleep 10 && pnpm migrate"
-  },
-  "devDependencies": {
-    "@typescript-eslint/eslint-plugin": "^6.0.0",
-    "@typescript-eslint/parser": "^6.0.0",
-    "concurrently": "^8.2.2",
-    "eslint": "^8.57.0",
-    "eslint-plugin-react": "^7.33.2",
-    "eslint-plugin-react-hooks": "^4.6.0",
-    "prettier": "^3.1.0",
-    "typescript": "^5.0.0"
-  },
+  "workspaces": [
+    "packages/*",
+    "backend/*",
+    "frontend/*"
+  ],
   "engines": {
     "node": ">=18.0.0",
     "pnpm": ">=8.0.0"
-  }
+  },
+  "scripts": {
+    "setup": "pnpm install && pnpm build:types && pnpm build:shared && pnpm migrate && pnpm seed",
+    "dev": "concurrently \"pnpm dev:api\" \"pnpm dev:client\" \"pnpm dev:tenant\" \"pnpm dev:kitchen\"",
+    "dev:api": "pnpm --filter @foodtrack/api-gateway dev",
+    "dev:client": "pnpm --filter @foodtrack/client-frontend dev",
+    "dev:tenant": "pnpm --filter @foodtrack/tenant-frontend dev",
+    "dev:kitchen": "pnpm --filter @foodtrack/kitchen-frontend dev",
+    "dev:delivery": "pnpm --filter @foodtrack/delivery-frontend dev",
+    "build": "pnpm build:types && pnpm build:shared && pnpm build:backend && pnpm build:frontend",
+    "build:types": "pnpm --filter @foodtrack/types build",
+    "build:shared": "pnpm --filter @foodtrack/backend-shared build",
+    "build:backend": "pnpm --filter \"@foodtrack/api-gateway\" build",
+    "build:frontend": "pnpm --filter \"@foodtrack/*-frontend\" build",
+    "docker:up": "docker-compose -f docker-compose.dev.yml up -d",
+    "docker:down": "docker-compose -f docker-compose.dev.yml down",
+    "docker:logs": "docker-compose -f docker-compose.dev.yml logs -f",
+    "migrate": "pnpm --filter @foodtrack/api-gateway migrate",
+    "migrate:reset": "pnpm --filter @foodtrack/api-gateway migrate:reset",
+    "seed": "pnpm --filter @foodtrack/api-gateway seed",
+    "db:reset": "pnpm migrate:reset && pnpm migrate && pnpm seed",
+    "lint": "eslint . --ext .ts,.tsx,.js,.jsx --fix",
+    "lint:check": "eslint . --ext .ts,.tsx,.js,.jsx",
+    "type-check": "pnpm --filter \"@foodtrack/*\" type-check",
+    "test": "pnpm --filter \"@foodtrack/*\" test",
+    "test:coverage": "pnpm --filter \"@foodtrack/*\" test:coverage",
+    "test:e2e": "pnpm --filter @foodtrack/api-gateway test:e2e",
+    "clean": "pnpm --filter \"@foodtrack/*\" clean && rm -rf node_modules",
+    "reset": "pnpm clean && pnpm install && pnpm setup",
+    "start": "pnpm --filter @foodtrack/api-gateway start",
+    "start:client": "pnpm --filter @foodtrack/client-frontend start",
+    "start:tenant": "pnpm --filter @foodtrack/tenant-frontend start",
+    "start:kitchen": "pnpm --filter @foodtrack/kitchen-frontend start",
+    "postinstall": "husky install"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "@typescript-eslint/eslint-plugin": "^6.13.0",
+    "@typescript-eslint/parser": "^6.13.0",
+    "concurrently": "^8.2.2",
+    "eslint": "^8.54.0",
+    "eslint-config-prettier": "^9.0.0",
+    "eslint-plugin-prettier": "^5.0.1",
+    "husky": "^8.0.3",
+    "lint-staged": "^15.2.0",
+    "prettier": "^3.1.0",
+    "typescript": "^5.3.0"
+  },
+  "lint-staged": {
+    "*.{ts,tsx,js,jsx}": [
+      "eslint --fix",
+      "prettier --write"
+    ],
+    "*.{json,md,yml,yaml}": [
+      "prettier --write"
+    ]
+  },
+  "keywords": [
+    "restaurant",
+    "pos",
+    "food-service",
+    "event-driven",
+    "multi-tenant",
+    "typescript",
+    "react",
+    "nodejs"
+  ],
+  "author": "FoodTrack Team",
+  "license": "MIT"
 }

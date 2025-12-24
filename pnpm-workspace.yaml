@@ -1,4 +1,12 @@
 packages:
+  # Shared packages
   - 'packages/*'
-  - 'frontend/*'
+  
+  # Backend services
   - 'backend/*'
+  
+  # Frontend applications
+  - 'frontend/*'
+  
+  # Scripts and tools
+  - 'scripts'

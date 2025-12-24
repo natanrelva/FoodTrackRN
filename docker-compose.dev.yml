@@ -1,24 +1,29 @@
 version: '3.8'
 
 services:
+  # PostgreSQL Database
   postgres:
     image: postgres:15-alpine
     container_name: foodtrack-postgres
     environment:
-      POSTGRES_DB: foodtrack
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: foodtrack_dev
+      POSTGRES_USER: foodtrack
+      POSTGRES_PASSWORD: foodtrack123
+      POSTGRES_INITDB_ARGS: "--encoding=UTF-8 --lc-collate=C --lc-ctype=C"
     ports:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./backend/migrations:/docker-entrypoint-initdb.d
+    networks:
+      - foodtrack-network
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      test: ["CMD-SHELL", "pg_isready -U foodtrack -d foodtrack_dev"]
       interval: 10s
       timeout: 5s
       retries: 5
 
+  # Redis Cache
   redis:
     image: redis:7-alpine
     container_name: foodtrack-redis
@@ -26,22 +31,68 @@ services:
       - "6379:6379"
     volumes:
       - redis_data:/data
+    networks:
+      - foodtrack-network
+    command: redis-server --appendonly yes --requirepass foodtrack123
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
       interval: 10s
-      timeout: 5s
+      timeout: 3s
       retries: 5
 
+  # Adminer - Database Admin Interface
   adminer:
-    image: adminer:latest
+    image: adminer:4.8.1
     container_name: foodtrack-adminer
     ports:
       - "8082:8080"
+    networks:
+      - foodtrack-network
     depends_on:
       - postgres
     environment:
       ADMINER_DEFAULT_SERVER: postgres
+      ADMINER_DESIGN: pepa-linha-dark
+
+  # MinIO - File Storage (for product images)
+  minio:
+    image: minio/minio:latest
+    container_name: foodtrack-minio
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+    networks:
+      - foodtrack-network
+    environment:
+      MINIO_ROOT_USER: foodtrack
+      MINIO_ROOT_PASSWORD: foodtrack123
+    command: server /data --console-address ":9001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+
+  # Mailhog - Email Testing
+  mailhog:
+    image: mailhog/mailhog:latest
+    container_name: foodtrack-mailhog
+    ports:
+      - "1025:1025"  # SMTP
+      - "8025:8025"  # Web UI
+    networks:
+      - foodtrack-network
 
 volumes:
   postgres_data:
+    driver: local
   redis_data:
+    driver: local
+  minio_data:
+    driver: local
+
+networks:
+  foodtrack-network:
+    driver: bridge

@@ -2,82 +2,111 @@ import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import compression from 'compression';
-import morgan from 'morgan';
-import rateLimit from 'express-rate-limit';
-import dotenv from 'dotenv';
 import { createServer } from 'http';
+import { Server as SocketIOServer } from 'socket.io';
 
-import { errorHandler } from './middleware/errorHandler';
-import { authMiddleware } from './middleware/auth';
-import { tenantMiddleware } from './middleware/tenant';
-import { webSocketService } from './services/WebSocketService';
+const app = express();
+const server = createServer(app);
+const io = new SocketIOServer(server, {
+  cors: {
+    origin: ["http://localhost:3000", "http://localhost:3001", "http://localhost:3002", "http://localhost:3003"],
+    methods: ["GET", "POST"]
+  }
+});
 
-// Routes
-import authRoutes from './routes/auth';
-import productRoutes from './routes/products';
-import orderRoutes from './routes/orders';
-import customerRoutes from './routes/customers';
-import dashboardRoutes from './routes/dashboard';
-import notificationRoutes from './routes/notifications';
-import kitchenRoutes from './routes/kitchen';
-import websocketTestRoutes from './routes/websocket-test';
-
-dotenv.config();
-
-const app: express.Application = express();
 const PORT = process.env.PORT || 4000;
 
-// Security middleware
+// Middleware
 app.use(helmet());
 app.use(cors({
-  origin: process.env.ALLOWED_ORIGINS?.split(',') || ['http://localhost:3001', 'http://localhost:3002', 'http://localhost:3003'],
-  credentials: true,
+  origin: ["http://localhost:3000", "http://localhost:3001", "http://localhost:3002", "http://localhost:3003"],
+  credentials: true
 }));
-
-// Rate limiting
-const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // limit each IP to 100 requests per windowMs
-});
-app.use(limiter);
-
-// General middleware
 app.use(compression());
-app.use(morgan('combined'));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 
-// Health check
+// Health check endpoint
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+  res.json({ 
+    status: 'ok', 
+    timestamp: new Date().toISOString(),
+    uptime: process.uptime(),
+    environment: process.env.NODE_ENV || 'development'
+  });
 });
 
-// Public routes
-app.use('/api/auth', authRoutes);
+// Basic API routes
+app.get('/api', (req, res) => {
+  res.json({ 
+    message: 'FoodTrack API Gateway',
+    version: '1.0.0',
+    endpoints: {
+      health: '/health',
+      api: '/api'
+    }
+  });
+});
 
-// Protected routes (require authentication)
-app.use('/api', authMiddleware);
-app.use('/api', tenantMiddleware);
+// WebSocket connection handling
+io.on('connection', (socket) => {
+  console.log(`Client connected: ${socket.id}`);
+  
+  socket.on('disconnect', () => {
+    console.log(`Client disconnected: ${socket.id}`);
+  });
+  
+  // Kitchen subscriptions
+  socket.on('kitchen:subscribe', (tenantId: string) => {
+    socket.join(`kitchen:${tenantId}`);
+    console.log(`Kitchen subscribed to tenant: ${tenantId}`);
+  });
+  
+  // Order subscriptions
+  socket.on('order:subscribe', (orderId: string) => {
+    socket.join(`order:${orderId}`);
+    console.log(`Subscribed to order: ${orderId}`);
+  });
+});
 
-app.use('/api/products', productRoutes);
-app.use('/api/orders', orderRoutes);
-app.use('/api/customers', customerRoutes);
-app.use('/api/dashboard', dashboardRoutes);
-app.use('/api/notifications', notificationRoutes);
-app.use('/api/kitchen', kitchenRoutes);
-app.use('/api/websocket', websocketTestRoutes);
+// Error handling middleware
+app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
+  console.error('Error:', err);
+  res.status(err.status || 500).json({
+    success: false,
+    error: {
+      code: err.code || 'INTERNAL_ERROR',
+      message: err.message || 'Internal server error'
+    }
+  });
+});
 
-// Error handling
-app.use(errorHandler);
+// 404 handler
+app.use('*', (req, res) => {
+  res.status(404).json({
+    success: false,
+    error: {
+      code: 'NOT_FOUND',
+      message: `Route ${req.originalUrl} not found`
+    }
+  });
+});
 
-// Create HTTP server and initialize WebSocket
-const server = createServer(app);
-webSocketService.initialize(server);
-
+// Start server
 server.listen(PORT, () => {
+  console.log('🔌 WebSocket server initialized');
   console.log(`🚀 API Gateway running on port ${PORT}`);
   console.log(`📊 Health check: http://localhost:${PORT}/health`);
-  console.log(`🔌 WebSocket server ready for kitchen connections`);
+  console.log('🔌 WebSocket server ready for kitchen connections');
 });
 
-export default app;
+// Graceful shutdown
+process.on('SIGTERM', () => {
+  console.log('SIGTERM received, shutting down gracefully');
+  server.close(() => {
+    console.log('Server closed');
+    process.exit(0);
+  });
+});
+
+export { app, server, io };
