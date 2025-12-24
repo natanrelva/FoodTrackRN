@@ -4,13 +4,17 @@ import helmet from 'helmet';
 import compression from 'compression';
 import { createServer } from 'http';
 import { Server as SocketIOServer } from 'socket.io';
+import { DatabaseConnection } from '@foodtrack/backend-shared';
+
+// Import routes
+import productsRouter from './routes/products';
 
 const app = express();
 const server = createServer(app);
 const io = new SocketIOServer(server, {
   cors: {
     origin: ["http://localhost:3000", "http://localhost:3001", "http://localhost:3002", "http://localhost:3003"],
-    methods: ["GET", "POST"]
+    methods: ["GET", "POST", "PUT", "DELETE"]
   }
 });
 
@@ -25,6 +29,15 @@ app.use(cors({
 app.use(compression());
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
+
+// Add tenant middleware (simplified for now)
+app.use((req, res, next) => {
+  // For now, use a default tenant ID if not provided
+  if (!req.headers['x-tenant-id']) {
+    req.headers['x-tenant-id'] = '550e8400-e29b-41d4-a716-446655440000';
+  }
+  next();
+});
 
 // Health check endpoint
 app.get('/health', (req, res) => {
@@ -43,10 +56,14 @@ app.get('/api', (req, res) => {
     version: '1.0.0',
     endpoints: {
       health: '/health',
+      products: '/api/products',
       api: '/api'
     }
   });
 });
+
+// API Routes
+app.use('/api/products', productsRouter);
 
 // WebSocket connection handling
 io.on('connection', (socket) => {
@@ -93,12 +110,26 @@ app.use('*', (req, res) => {
 });
 
 // Start server
-server.listen(PORT, () => {
-  console.log('🔌 WebSocket server initialized');
-  console.log(`🚀 API Gateway running on port ${PORT}`);
-  console.log(`📊 Health check: http://localhost:${PORT}/health`);
-  console.log('🔌 WebSocket server ready for kitchen connections');
-});
+DatabaseConnection.testConnection()
+  .then((connected) => {
+    if (connected) {
+      console.log('✅ Database connection successful');
+      
+      server.listen(PORT, () => {
+        console.log('🔌 WebSocket server initialized');
+        console.log(`🚀 API Gateway running on port ${PORT}`);
+        console.log(`📊 Health check: http://localhost:${PORT}/health`);
+        console.log('🔌 WebSocket server ready for kitchen connections');
+      });
+    } else {
+      console.error('❌ Database connection failed');
+      process.exit(1);
+    }
+  })
+  .catch((error) => {
+    console.error('❌ Failed to start server:', error);
+    process.exit(1);
+  });
 
 // Graceful shutdown
 process.on('SIGTERM', () => {

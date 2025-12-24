@@ -1,104 +1,439 @@
-import express, { Router } from 'express';
+import { Router, Request, Response } from 'express';
 import { z } from 'zod';
-import { ProductRepository } from '../repositories/ProductRepository';
+import { ProductService } from '../services/ProductService';
+import { 
+  CreateProductSchema, 
+  UpdateProductSchema, 
+  ProductFiltersSchema,
+  UpdateAvailabilitySchema,
+  ProductResponseSchema,
+  ProductListResponseSchema
+} from '../models/Product';
 
-const router: express.Router = Router();
-const productRepository = new ProductRepository();
+const router = Router();
+const productService = new ProductService();
 
-// Create product schema
-const CreateProductSchema = z.object({
-  name: z.string().min(1),
-  description: z.string(),
-  price: z.number().positive(),
-  image: z.string().url(),
-  category: z.string(),
-  stock: z.number().int().min(0).default(0),
-  active: z.boolean().default(true),
-  extras: z.array(z.object({
-    name: z.string(),
-    price: z.number().positive(),
-  })).optional(),
-  tags: z.array(z.string()).default([]),
-  preparationTime: z.number().int().positive().optional(),
-});
-
-// GET /api/products
-router.get('/', async (req, res, next) => {
+// GET /api/products - List products with filters
+router.get('/', async (req: Request, res: Response) => {
   try {
-    const { category, active, search } = req.query;
-    
-    const filters: any = {};
-    if (category) filters.category = category;
-    if (active !== undefined) filters.active = active === 'true';
-    if (search) filters.search = search;
-
-    const products = await productRepository.findAll(req.tenantId!, filters);
-    res.json(products);
-  } catch (error) {
-    next(error);
-  }
-});
-
-// GET /api/products/:id
-router.get('/:id', async (req, res, next) => {
-  try {
-    const product = await productRepository.findById(req.params.id, req.tenantId!);
-    
-    if (!product) {
-      return res.status(404).json({ error: 'Produto não encontrado' });
+    const tenantId = req.headers['x-tenant-id'] as string;
+    if (!tenantId) {
+      return res.status(400).json({
+        success: false,
+        error: {
+          code: 'MISSING_TENANT_ID',
+          message: 'Tenant ID is required',
+        },
+      });
     }
 
-    res.json(product);
-  } catch (error) {
-    next(error);
-  }
-});
-
-// POST /api/products
-router.post('/', async (req, res, next) => {
-  try {
-    const data = CreateProductSchema.parse(req.body);
-    
-    const product = await productRepository.create({
-      ...data,
-      tenantId: req.tenantId!,
+    // Parse and validate query parameters
+    const filters = ProductFiltersSchema.parse({
+      category: req.query.category,
+      active: req.query.active === 'true' ? true : req.query.active === 'false' ? false : undefined,
+      search: req.query.search,
+      minPrice: req.query.minPrice ? parseFloat(req.query.minPrice as string) : undefined,
+      maxPrice: req.query.maxPrice ? parseFloat(req.query.maxPrice as string) : undefined,
+      tags: req.query.tags ? (req.query.tags as string).split(',') : undefined,
+      page: req.query.page ? parseInt(req.query.page as string) : undefined,
+      limit: req.query.limit ? parseInt(req.query.limit as string) : undefined,
     });
 
-    res.status(201).json(product);
+    const result = await productService.findAll(tenantId, filters);
+
+    const response: ProductListResponseSchema = {
+      success: true,
+      data: result,
+    };
+
+    res.json(response);
   } catch (error) {
-    next(error);
+    console.error('Error listing products:', error);
+    
+    if (error instanceof z.ZodError) {
+      return res.status(400).json({
+        success: false,
+        error: {
+          code: 'VALIDATION_ERROR',
+          message: 'Invalid query parameters',
+          details: error.errors,
+        },
+      });
+    }
+
+    res.status(500).json({
+      success: false,
+      error: {
+        code: 'INTERNAL_ERROR',
+        message: 'Failed to list products',
+      },
+    });
   }
 });
 
-// PUT /api/products/:id
-router.put('/:id', async (req, res, next) => {
+// GET /api/products/categories - Get all categories
+router.get('/categories', async (req: Request, res: Response) => {
   try {
-    const data = CreateProductSchema.partial().parse(req.body);
+    const tenantId = req.headers['x-tenant-id'] as string;
+    if (!tenantId) {
+      return res.status(400).json({
+        success: false,
+        error: {
+          code: 'MISSING_TENANT_ID',
+          message: 'Tenant ID is required',
+        },
+      });
+    }
+
+    const categories = await productService.getCategories(tenantId);
+
+    res.json({
+      success: true,
+      data: categories,
+    });
+  } catch (error) {
+    console.error('Error getting categories:', error);
+    res.status(500).json({
+      success: false,
+      error: {
+        code: 'INTERNAL_ERROR',
+        message: 'Failed to get categories',
+      },
+    });
+  }
+});
+
+// GET /api/products/:id - Get product by ID
+router.get('/:id', async (req: Request, res: Response) => {
+  try {
+    const tenantId = req.headers['x-tenant-id'] as string;
+    if (!tenantId) {
+      return res.status(400).json({
+        success: false,
+        error: {
+          code: 'MISSING_TENANT_ID',
+          message: 'Tenant ID is required',
+        },
+      });
+    }
+
+    const { id } = req.params;
     
-    const product = await productRepository.update(req.params.id, data, req.tenantId!);
-    
+    // Validate UUID format
+    if (!z.string().uuid().safeParse(id).success) {
+      return res.status(400).json({
+        success: false,
+        error: {
+          code: 'INVALID_ID',
+          message: 'Invalid product ID format',
+        },
+      });
+    }
+
+    const product = await productService.findById(id, tenantId);
+
     if (!product) {
-      return res.status(404).json({ error: 'Produto não encontrado' });
+      return res.status(404).json({
+        success: false,
+        error: {
+          code: 'PRODUCT_NOT_FOUND',
+          message: 'Product not found',
+        },
+      });
     }
 
-    res.json(product);
+    const response: ProductResponseSchema = {
+      success: true,
+      data: product,
+    };
+
+    res.json(response);
   } catch (error) {
-    next(error);
+    console.error('Error getting product:', error);
+    res.status(500).json({
+      success: false,
+      error: {
+        code: 'INTERNAL_ERROR',
+        message: 'Failed to get product',
+      },
+    });
   }
 });
 
-// DELETE /api/products/:id
-router.delete('/:id', async (req, res, next) => {
+// POST /api/products - Create new product
+router.post('/', async (req: Request, res: Response) => {
   try {
-    const deleted = await productRepository.delete(req.params.id, req.tenantId!);
-    
-    if (!deleted) {
-      return res.status(404).json({ error: 'Produto não encontrado' });
+    const tenantId = req.headers['x-tenant-id'] as string;
+    if (!tenantId) {
+      return res.status(400).json({
+        success: false,
+        error: {
+          code: 'MISSING_TENANT_ID',
+          message: 'Tenant ID is required',
+        },
+      });
     }
 
-    res.status(204).send();
+    const productData = CreateProductSchema.parse(req.body);
+    const product = await productService.create(productData, tenantId);
+
+    const response: ProductResponseSchema = {
+      success: true,
+      data: product,
+    };
+
+    res.status(201).json(response);
   } catch (error) {
-    next(error);
+    console.error('Error creating product:', error);
+    
+    if (error instanceof z.ZodError) {
+      return res.status(400).json({
+        success: false,
+        error: {
+          code: 'VALIDATION_ERROR',
+          message: 'Invalid product data',
+          details: error.errors,
+        },
+      });
+    }
+
+    res.status(500).json({
+      success: false,
+      error: {
+        code: 'INTERNAL_ERROR',
+        message: 'Failed to create product',
+      },
+    });
+  }
+});
+
+// PUT /api/products/:id - Update product
+router.put('/:id', async (req: Request, res: Response) => {
+  try {
+    const tenantId = req.headers['x-tenant-id'] as string;
+    if (!tenantId) {
+      return res.status(400).json({
+        success: false,
+        error: {
+          code: 'MISSING_TENANT_ID',
+          message: 'Tenant ID is required',
+        },
+      });
+    }
+
+    const { id } = req.params;
+    
+    // Validate UUID format
+    if (!z.string().uuid().safeParse(id).success) {
+      return res.status(400).json({
+        success: false,
+        error: {
+          code: 'INVALID_ID',
+          message: 'Invalid product ID format',
+        },
+      });
+    }
+
+    const updateData = UpdateProductSchema.parse(req.body);
+    const product = await productService.update(id, updateData, tenantId);
+
+    if (!product) {
+      return res.status(404).json({
+        success: false,
+        error: {
+          code: 'PRODUCT_NOT_FOUND',
+          message: 'Product not found',
+        },
+      });
+    }
+
+    const response: ProductResponseSchema = {
+      success: true,
+      data: product,
+    };
+
+    res.json(response);
+  } catch (error) {
+    console.error('Error updating product:', error);
+    
+    if (error instanceof z.ZodError) {
+      return res.status(400).json({
+        success: false,
+        error: {
+          code: 'VALIDATION_ERROR',
+          message: 'Invalid update data',
+          details: error.errors,
+        },
+      });
+    }
+
+    res.status(500).json({
+      success: false,
+      error: {
+        code: 'INTERNAL_ERROR',
+        message: 'Failed to update product',
+      },
+    });
+  }
+});
+
+// DELETE /api/products/:id - Delete product (soft delete)
+router.delete('/:id', async (req: Request, res: Response) => {
+  try {
+    const tenantId = req.headers['x-tenant-id'] as string;
+    if (!tenantId) {
+      return res.status(400).json({
+        success: false,
+        error: {
+          code: 'MISSING_TENANT_ID',
+          message: 'Tenant ID is required',
+        },
+      });
+    }
+
+    const { id } = req.params;
+    
+    // Validate UUID format
+    if (!z.string().uuid().safeParse(id).success) {
+      return res.status(400).json({
+        success: false,
+        error: {
+          code: 'INVALID_ID',
+          message: 'Invalid product ID format',
+        },
+      });
+    }
+
+    const deleted = await productService.delete(id, tenantId);
+
+    if (!deleted) {
+      return res.status(404).json({
+        success: false,
+        error: {
+          code: 'PRODUCT_NOT_FOUND',
+          message: 'Product not found',
+        },
+      });
+    }
+
+    res.json({
+      success: true,
+      data: {
+        message: 'Product deleted successfully',
+      },
+    });
+  } catch (error) {
+    console.error('Error deleting product:', error);
+    res.status(500).json({
+      success: false,
+      error: {
+        code: 'INTERNAL_ERROR',
+        message: 'Failed to delete product',
+      },
+    });
+  }
+});
+
+// PUT /api/products/:id/availability - Update product availability
+router.put('/:id/availability', async (req: Request, res: Response) => {
+  try {
+    const tenantId = req.headers['x-tenant-id'] as string;
+    if (!tenantId) {
+      return res.status(400).json({
+        success: false,
+        error: {
+          code: 'MISSING_TENANT_ID',
+          message: 'Tenant ID is required',
+        },
+      });
+    }
+
+    const { id } = req.params;
+    
+    // Validate UUID format
+    if (!z.string().uuid().safeParse(id).success) {
+      return res.status(400).json({
+        success: false,
+        error: {
+          code: 'INVALID_ID',
+          message: 'Invalid product ID format',
+        },
+      });
+    }
+
+    const { active } = UpdateAvailabilitySchema.parse(req.body);
+    const product = await productService.updateAvailability(id, active, tenantId);
+
+    if (!product) {
+      return res.status(404).json({
+        success: false,
+        error: {
+          code: 'PRODUCT_NOT_FOUND',
+          message: 'Product not found',
+        },
+      });
+    }
+
+    const response: ProductResponseSchema = {
+      success: true,
+      data: product,
+    };
+
+    res.json(response);
+  } catch (error) {
+    console.error('Error updating product availability:', error);
+    
+    if (error instanceof z.ZodError) {
+      return res.status(400).json({
+        success: false,
+        error: {
+          code: 'VALIDATION_ERROR',
+          message: 'Invalid availability data',
+          details: error.errors,
+        },
+      });
+    }
+
+    res.status(500).json({
+      success: false,
+      error: {
+        code: 'INTERNAL_ERROR',
+        message: 'Failed to update product availability',
+      },
+    });
+  }
+});
+
+// GET /api/products/category/:category - Get products by category
+router.get('/category/:category', async (req: Request, res: Response) => {
+  try {
+    const tenantId = req.headers['x-tenant-id'] as string;
+    if (!tenantId) {
+      return res.status(400).json({
+        success: false,
+        error: {
+          code: 'MISSING_TENANT_ID',
+          message: 'Tenant ID is required',
+        },
+      });
+    }
+
+    const { category } = req.params;
+    const products = await productService.findByCategory(category, tenantId);
+
+    res.json({
+      success: true,
+      data: products,
+    });
+  } catch (error) {
+    console.error('Error getting products by category:', error);
+    res.status(500).json({
+      success: false,
+      error: {
+        code: 'INTERNAL_ERROR',
+        message: 'Failed to get products by category',
+      },
+    });
   }
 });
 

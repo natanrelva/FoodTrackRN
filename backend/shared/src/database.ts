@@ -69,9 +69,8 @@ export abstract class BaseRepository<T> {
 
     Object.entries(filters).forEach(([key, value]) => {
       if (value !== undefined && value !== null) {
-        conditions.push(`${key} = $${paramIndex}`);
+        conditions.push(`${key} = $${paramIndex++}`);
         values.push(value);
-        paramIndex++;
       }
     });
 
