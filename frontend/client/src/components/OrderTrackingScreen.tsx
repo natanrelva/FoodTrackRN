@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react';
 import { ArrowLeft, Clock, CheckCircle2, Package, Truck, Home, MessageCircle, Instagram } from 'lucide-react';
-import { WebScreen } from '@foodtrack/types';
 import { motion } from 'motion/react';
 import { useWebSocketContext } from '../contexts/WebSocketContext';
+import { useOrders } from '../hooks/useClientApi';
 
 import { OrderTrackingScreenProps, WebOrderStatus } from '@foodtrack/types';
 
@@ -42,14 +42,46 @@ const statusConfig = {
 };
 
 export function OrderTrackingScreen({ orderId, onNavigate }: OrderTrackingScreenProps) {
-  const [currentStatus, setCurrentStatus] = useState<OrderStatus>('paid');
+  const [currentStatus, setCurrentStatus] = useState<OrderStatus>('awaiting_payment');
   const [estimatedTime, setEstimatedTime] = useState(45);
-  const [notifications, setNotifications] = useState<Array<{ time: string; message: string }>>([
-    { time: '14:23', message: 'Pedido confirmado' },
-    { time: '14:25', message: 'Pagamento aprovado' }
-  ]);
+  const [notifications, setNotifications] = useState<Array<{ time: string; message: string }>>([]);
 
   const { connected, recentOrderUpdates, trackOrder, stopTrackingOrder } = useWebSocketContext();
+  const { getOrder } = useOrders();
+
+  // Fetch initial order data
+  useEffect(() => {
+    const fetchOrderData = async () => {
+      if (orderId) {
+        try {
+          const order = await getOrder(orderId);
+          if (order) {
+            setCurrentStatus(order.status as OrderStatus);
+            
+            // Add initial notification
+            const now = new Date();
+            const timeStr = `${now.getHours()}:${now.getMinutes().toString().padStart(2, '0')}`;
+            setNotifications([
+              { time: timeStr, message: 'Pedido criado' },
+              { time: timeStr, message: statusConfig[order.status as OrderStatus]?.label || 'Status atualizado' }
+            ]);
+
+            // Set estimated time if available (mock for now)
+            setEstimatedTime(45);
+          }
+        } catch (error) {
+          console.error('Error fetching order:', error);
+          // Fallback to default state
+          setNotifications([
+            { time: '14:23', message: 'Pedido confirmado' },
+            { time: '14:25', message: 'Pagamento aprovado' }
+          ]);
+        }
+      }
+    };
+
+    fetchOrderData();
+  }, [orderId, getOrder]);
 
   // Track this order for real-time updates
   useEffect(() => {

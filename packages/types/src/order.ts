@@ -24,6 +24,10 @@ export interface CartItem {
   quantity: number;
   modifications?: string[];
   imageUrl?: string;
+  // Frontend compatibility fields
+  image?: string;
+  extras?: string[] | Array<{ id: string; name: string; price: number }>;
+  notes?: string;
 }
 
 export interface Address {

@@ -149,7 +149,17 @@ class ClientApiClient {
     }
     
     const endpoint = `/products${params.toString() ? `?${params.toString()}` : ''}`;
-    return this.request<Product[]>(endpoint);
+    const response = await this.request<{ products: Product[]; total: number; page: number; limit: number; totalPages: number }>(endpoint);
+    
+    // Extract products array from the paginated response
+    if (response.success && response.data) {
+      return {
+        success: true,
+        data: response.data.products,
+      };
+    }
+    
+    return response as ApiResponse<Product[]>;
   }
 
   async getProduct(productId: string): Promise<ApiResponse<Product>> {

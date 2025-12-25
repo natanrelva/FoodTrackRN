@@ -1,7 +1,6 @@
 import { useState } from 'react';
 import { ArrowLeft, Plus, Minus, Trash2, Tag, ShoppingBag } from 'lucide-react';
 import { useCart } from '../contexts/CartContext';
-import { WebScreen } from '@foodtrack/types';
 
 import { CartScreenProps } from '@foodtrack/types';
 

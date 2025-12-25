@@ -4,7 +4,7 @@ import { z } from 'zod';
 export const OrderStatusSchema = z.enum([
   'draft',
   'confirmed', 
-  'in_preparation',
+  'preparing',
   'ready',
   'delivering',
   'delivered',
@@ -228,8 +228,8 @@ export type OrderCancelledEvent = z.infer<typeof OrderCancelledEventSchema>;
 export class OrderStateMachine {
   private static readonly validTransitions: Record<OrderStatus, OrderStatus[]> = {
     draft: ['confirmed', 'cancelled'],
-    confirmed: ['in_preparation', 'cancelled'],
-    in_preparation: ['ready', 'cancelled'],
+    confirmed: ['preparing', 'cancelled'],
+    preparing: ['ready', 'cancelled'],
     ready: ['delivering', 'delivered', 'cancelled'],
     delivering: ['delivered', 'cancelled'],
     delivered: [], // Terminal state

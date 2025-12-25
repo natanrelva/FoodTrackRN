@@ -370,4 +370,224 @@ export class OrderService {
       throw new Error(`Failed to get order stats: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   }
+
+  // Analytics methods for dashboard
+  async getOrderAnalytics(tenantId: string, dateRange: { startDate: Date; endDate: Date }): Promise<{
+    totalRevenue: number;
+    totalOrders: number;
+    averageTicket: number;
+    delayedOrders: number;
+    growthRate?: number;
+    periodComparison?: { current: number; previous: number };
+    ordersByStatus: Record<string, number>;
+    ordersByChannel: Record<string, number>;
+  }> {
+    try {
+      // Get orders for the specified date range
+      const orders = await this.orderRepository.findByDateRange(
+        dateRange.startDate,
+        dateRange.endDate,
+        tenantId
+      );
+
+      // Calculate basic metrics
+      const totalOrders = orders.length;
+      const completedOrders = orders.filter(order => order.status === 'delivered');
+      const totalRevenue = completedOrders.reduce((sum, order) => sum + order.total, 0);
+      const averageTicket = totalOrders > 0 ? totalRevenue / totalOrders : 0;
+
+      // Calculate delayed orders (orders that took longer than estimated)
+      const delayedOrders = orders.filter(order => {
+        if (!order.estimatedCompletionTime || !order.updatedAt) return false;
+        return new Date(order.updatedAt) > new Date(order.estimatedCompletionTime);
+      }).length;
+
+      // Group by status
+      const ordersByStatus: Record<string, number> = {};
+      orders.forEach(order => {
+        ordersByStatus[order.status] = (ordersByStatus[order.status] || 0) + 1;
+      });
+
+      // Group by channel
+      const ordersByChannel: Record<string, number> = {};
+      orders.forEach(order => {
+        ordersByChannel[order.channel] = (ordersByChannel[order.channel] || 0) + 1;
+      });
+
+      // Calculate period comparison for growth rate
+      const periodDuration = dateRange.endDate.getTime() - dateRange.startDate.getTime();
+      const previousStartDate = new Date(dateRange.startDate.getTime() - periodDuration);
+      const previousEndDate = new Date(dateRange.startDate);
+
+      const previousOrders = await this.orderRepository.findByDateRange(
+        previousStartDate,
+        previousEndDate,
+        tenantId
+      );
+
+      const periodComparison = {
+        current: totalOrders,
+        previous: previousOrders.length
+      };
+
+      const growthRate = periodComparison.previous > 0 
+        ? ((periodComparison.current - periodComparison.previous) / periodComparison.previous) * 100
+        : 0;
+
+      return {
+        totalRevenue,
+        totalOrders,
+        averageTicket,
+        delayedOrders,
+        growthRate,
+        periodComparison,
+        ordersByStatus,
+        ordersByChannel
+      };
+    } catch (error) {
+      throw new Error(`Failed to get order analytics: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+
+  async getRecentOrders(tenantId: string, limit: number = 10): Promise<Order[]> {
+    try {
+      return await this.orderRepository.findRecent(tenantId, limit);
+    } catch (error) {
+      throw new Error(`Failed to get recent orders: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+
+  async getOrdersByDateRange(startDate: Date, endDate: Date, tenantId: string): Promise<Order[]> {
+    try {
+      return await this.orderRepository.findByDateRange(startDate, endDate, tenantId);
+    } catch (error) {
+      throw new Error(`Failed to get orders by date range: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+
+  // Advanced analytics methods
+  async getCustomerBehaviorInsights(tenantId: string, dateRange: { startDate: Date; endDate: Date }): Promise<{
+    repeatCustomers: number;
+    newCustomers: number;
+    averageOrdersPerCustomer: number;
+    topCustomers: Array<{ customerId: string; orderCount: number; totalSpent: number }>;
+  }> {
+    try {
+      const orders = await this.orderRepository.findByDateRange(
+        dateRange.startDate,
+        dateRange.endDate,
+        tenantId
+      );
+
+      const customerStats = new Map<string, { orderCount: number; totalSpent: number; firstOrder: Date }>();
+
+      orders.forEach(order => {
+        if (!order.customerId) return;
+
+        const existing = customerStats.get(order.customerId) || {
+          orderCount: 0,
+          totalSpent: 0,
+          firstOrder: order.createdAt
+        };
+
+        customerStats.set(order.customerId, {
+          orderCount: existing.orderCount + 1,
+          totalSpent: existing.totalSpent + (order.status === 'delivered' ? order.total : 0),
+          firstOrder: order.createdAt < existing.firstOrder ? order.createdAt : existing.firstOrder
+        });
+      });
+
+      const newCustomers = Array.from(customerStats.values()).filter(
+        stats => stats.firstOrder >= dateRange.startDate
+      ).length;
+
+      const repeatCustomers = Array.from(customerStats.values()).filter(
+        stats => stats.orderCount > 1
+      ).length;
+
+      const totalCustomers = customerStats.size;
+      const totalOrders = orders.length;
+      const averageOrdersPerCustomer = totalCustomers > 0 ? totalOrders / totalCustomers : 0;
+
+      const topCustomers = Array.from(customerStats.entries())
+        .map(([customerId, stats]) => ({
+          customerId,
+          orderCount: stats.orderCount,
+          totalSpent: stats.totalSpent
+        }))
+        .sort((a, b) => b.totalSpent - a.totalSpent)
+        .slice(0, 10);
+
+      return {
+        repeatCustomers,
+        newCustomers,
+        averageOrdersPerCustomer,
+        topCustomers
+      };
+    } catch (error) {
+      throw new Error(`Failed to get customer behavior insights: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+
+  async getProductPopularityAnalysis(tenantId: string, dateRange: { startDate: Date; endDate: Date }): Promise<{
+    topProducts: Array<{ productId: string; name: string; orderCount: number; revenue: number }>;
+    categoryPerformance: Record<string, { orderCount: number; revenue: number }>;
+  }> {
+    try {
+      const orders = await this.orderRepository.findByDateRange(
+        dateRange.startDate,
+        dateRange.endDate,
+        tenantId
+      );
+
+      const productStats = new Map<string, { name: string; orderCount: number; revenue: number; category?: string }>();
+
+      orders.forEach(order => {
+        if (order.status !== 'delivered') return;
+
+        order.items.forEach(item => {
+          const existing = productStats.get(item.productId) || {
+            name: item.name,
+            orderCount: 0,
+            revenue: 0,
+            category: item.category
+          };
+
+          productStats.set(item.productId, {
+            name: existing.name,
+            orderCount: existing.orderCount + item.quantity,
+            revenue: existing.revenue + (item.price * item.quantity),
+            category: existing.category
+          });
+        });
+      });
+
+      const topProducts = Array.from(productStats.entries())
+        .map(([productId, stats]) => ({
+          productId,
+          name: stats.name,
+          orderCount: stats.orderCount,
+          revenue: stats.revenue
+        }))
+        .sort((a, b) => b.revenue - a.revenue)
+        .slice(0, 10);
+
+      const categoryPerformance: Record<string, { orderCount: number; revenue: number }> = {};
+      productStats.forEach(stats => {
+        const category = stats.category || 'Uncategorized';
+        const existing = categoryPerformance[category] || { orderCount: 0, revenue: 0 };
+        categoryPerformance[category] = {
+          orderCount: existing.orderCount + stats.orderCount,
+          revenue: existing.revenue + stats.revenue
+        };
+      });
+
+      return {
+        topProducts,
+        categoryPerformance
+      };
+    } catch (error) {
+      throw new Error(`Failed to get product popularity analysis: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
 }

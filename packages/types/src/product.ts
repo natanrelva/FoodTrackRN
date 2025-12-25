@@ -9,6 +9,9 @@ export interface Product extends TenantEntity {
   available: boolean;
   stock?: number;
   preparationTime?: number;
+  // Frontend compatibility fields
+  image?: string;
+  extras?: Array<{ name: string; price: number }>;
 }
 
 export interface CreateProductRequest {

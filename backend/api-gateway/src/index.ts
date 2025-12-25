@@ -11,6 +11,11 @@ import productsRouter from './routes/products';
 import ordersRouter from './routes/orders';
 import kitchenRouter from './routes/kitchen';
 import websocketRouter from './routes/websocket';
+import analyticsRouter from './routes/analytics';
+import dashboardRouter from './routes/dashboard';
+
+// Import middleware
+import { tenantMiddleware } from './middleware/tenant';
 
 // Import WebSocket services
 import { WebSocketService } from './services/WebSocketService';
@@ -47,11 +52,13 @@ app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 
 // Add tenant middleware (simplified for now)
-app.use((req, res, next) => {
+app.use('/api', (req, res, next) => {
   // For now, use a default tenant ID if not provided
   if (!req.headers['x-tenant-id']) {
     req.headers['x-tenant-id'] = '550e8400-e29b-41d4-a716-446655440000';
   }
+  // Set tenantId on request object for easy access
+  req.tenantId = req.headers['x-tenant-id'] as string;
   next();
 });
 
@@ -75,6 +82,8 @@ app.get('/api', (req, res) => {
       products: '/api/products',
       orders: '/api/orders',
       kitchen: '/api/kitchen',
+      dashboard: '/api/dashboard',
+      analytics: '/api/analytics',
       websocket: '/api/websocket',
       api: '/api'
     }
@@ -86,6 +95,8 @@ app.use('/api/products', productsRouter);
 app.use('/api/orders', ordersRouter);
 app.use('/api/kitchen', kitchenRouter);
 app.use('/api/websocket', websocketRouter);
+app.use('/api/analytics', analyticsRouter);
+app.use('/api/dashboard', dashboardRouter);
 
 // WebSocket connection handling with authentication
 io.use(websocketAuthMiddleware);

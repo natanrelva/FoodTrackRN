@@ -155,45 +155,13 @@ export class KitchenApiClient {
     page?: number;
     limit?: number;
   }): Promise<ApiResponse<{ orders: KitchenOrder[] }>> {
-    // Use mock data in development
-    if (import.meta.env.DEV) {
-      const { mockKitchenOrders } = await import('../data/mockKitchenOrders');
-      
-      let filteredOrders = [...mockKitchenOrders];
-      
-      if (filters) {
-        if (filters.status && filters.status.length > 0) {
-          filteredOrders = filteredOrders.filter(order => 
-            filters.status!.includes(order.status)
-          );
-        }
-        
-        if (filters.priority && filters.priority.length > 0) {
-          filteredOrders = filteredOrders.filter(order => 
-            filters.priority!.includes(order.priority)
-          );
-        }
-        
-        if (filters.stationId) {
-          filteredOrders = filteredOrders.filter(order => 
-            order.assignedStations.some(station => station.stationId === filters.stationId)
-          );
-        }
-      }
-      
-      // Simulate API delay
-      await new Promise(resolve => setTimeout(resolve, 500));
-      
-      return { success: true, data: { orders: filteredOrders } };
-    }
-
     const params = new URLSearchParams();
     
     if (filters) {
-      if (filters.status) {
+      if (filters.status && filters.status.length > 0) {
         filters.status.forEach(s => params.append('status', s));
       }
-      if (filters.priority) {
+      if (filters.priority && filters.priority.length > 0) {
         filters.priority.forEach(p => params.append('priority', p));
       }
       if (filters.stationId) {
@@ -216,7 +184,42 @@ export class KitchenApiClient {
     const queryString = params.toString();
     const endpoint = `/kitchen/orders${queryString ? `?${queryString}` : ''}`;
     
-    return this.request<{ orders: KitchenOrder[] }>(endpoint);
+    const response = await this.request<{ orders: KitchenOrder[] }>(endpoint);
+    
+    // Transform backend response to match frontend expectations
+    if (response.success && response.data) {
+      const transformedOrders = response.data.orders.map(order => ({
+        ...order,
+        // Map backend status to frontend status if needed
+        status: this.mapBackendStatus(order.status),
+        // Ensure all required fields are present
+        items: order.items || [],
+        assignedStations: order.assignedStations || [],
+        allergenAlerts: order.allergenAlerts || [],
+        priority: order.priority || 'medium'
+      }));
+      
+      return {
+        success: true,
+        data: { orders: transformedOrders }
+      };
+    }
+    
+    return response;
+  }
+
+  private mapBackendStatus(backendStatus: string): KitchenStatus {
+    // Map backend kitchen order statuses to frontend statuses
+    const statusMap: Record<string, KitchenStatus> = {
+      'pending': 'received',
+      'assigned': 'received', 
+      'preparing': 'in_preparation',
+      'ready': 'ready_for_pickup',
+      'completed': 'ready_for_pickup',
+      'failed': 'on_hold'
+    };
+    
+    return statusMap[backendStatus] || backendStatus as KitchenStatus;
   }
 
   async getKitchenOrder(id: string): Promise<ApiResponse<KitchenOrder>> {
@@ -271,32 +274,38 @@ export class KitchenApiClient {
       };
     }
 
-    // Use mock data in development
-    if (import.meta.env.DEV) {
-      const { mockKitchenOrders } = await import('../data/mockKitchenOrders');
-      const order = mockKitchenOrders.find(o => o.id === orderId);
-      
-      if (!order) {
-        return {
-          success: false,
-          error: { code: 'NOT_FOUND', message: 'Order not found' }
-        };
-      }
-      
-      // Simulate API delay
-      await new Promise(resolve => setTimeout(resolve, 300));
-      
-      // Return updated order (in real implementation, this would be persisted)
+    // Map frontend status to backend status
+    const backendStatus = this.mapFrontendStatus(status);
+    
+    const response = await this.request<KitchenOrder>(`/kitchen/orders/${orderId}/status`, {
+      method: 'PUT',
+      body: JSON.stringify({ status: backendStatus, stationId }),
+    });
+    
+    // Transform response back to frontend format
+    if (response.success && response.data) {
       return {
         success: true,
-        data: { ...order, status }
+        data: {
+          ...response.data,
+          status: this.mapBackendStatus(response.data.status)
+        }
       };
     }
+    
+    return response;
+  }
 
-    return this.request<KitchenOrder>(`/kitchen/orders/${orderId}/status`, {
-      method: 'PUT',
-      body: JSON.stringify({ status, stationId }),
-    });
+  private mapFrontendStatus(frontendStatus: KitchenStatus): string {
+    // Map frontend kitchen statuses to backend statuses
+    const statusMap: Record<KitchenStatus, string> = {
+      'received': 'pending',
+      'in_preparation': 'preparing',
+      'ready_for_pickup': 'ready',
+      'on_hold': 'failed'
+    };
+    
+    return statusMap[frontendStatus] || frontendStatus;
   }
 
   // WebSocket Token API

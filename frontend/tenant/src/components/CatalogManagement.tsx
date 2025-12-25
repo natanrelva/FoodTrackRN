@@ -1,18 +1,34 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Plus, Search, Edit, Trash2, Image as ImageIcon } from 'lucide-react';
-import { mockProducts, Product } from '../data/mockData';
+import { useTenantProducts } from '../hooks/useTenantApi';
 import { ImageWithFallback } from './figma/ImageWithFallback';
+import { Product } from '@foodtrack/types';
 
 export function CatalogManagement() {
-  const [products, setProducts] = useState<Product[]>(mockProducts);
   const [searchTerm, setSearchTerm] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('all');
   const [showModal, setShowModal] = useState(false);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
 
-  const categories = Array.from(new Set(products.map(p => p.category)));
+  const { 
+    data: products, 
+    loading, 
+    error, 
+    fetchProducts, 
+    createProduct, 
+    updateProduct, 
+    deleteProduct, 
+    toggleProductAvailability 
+  } = useTenantProducts();
 
-  const filteredProducts = products.filter(product => {
+  // Fetch products on component mount
+  useEffect(() => {
+    fetchProducts();
+  }, [fetchProducts]);
+
+  const categories = products ? Array.from(new Set(products.map(p => p.category))) : [];
+
+  const filteredProducts = (products || []).filter(product => {
     const matchesSearch = product.name.toLowerCase().includes(searchTerm.toLowerCase());
     const matchesCategory = categoryFilter === 'all' || product.category === categoryFilter;
     return matchesSearch && matchesCategory;
@@ -28,16 +44,23 @@ export function CatalogManagement() {
     setShowModal(true);
   };
 
-  const handleDeleteProduct = (productId: string) => {
+  const handleDeleteProduct = async (productId: string) => {
     if (confirm('Tem certeza que deseja remover este produto?')) {
-      setProducts(products.filter(p => p.id !== productId));
+      const result = await deleteProduct(productId);
+      if (!result.success) {
+        alert(`Erro ao remover produto: ${result.error}`);
+      }
     }
   };
 
-  const handleToggleActive = (productId: string) => {
-    setProducts(products.map(p => 
-      p.id === productId ? { ...p, active: !p.active } : p
-    ));
+  const handleToggleActive = async (productId: string) => {
+    const product = products?.find(p => p.id === productId);
+    if (product) {
+      const result = await toggleProductAvailability(productId, !product.available);
+      if (!result.success) {
+        alert(`Erro ao alterar status do produto: ${result.error}`);
+      }
+    }
   };
 
   return (
@@ -49,113 +72,166 @@ export function CatalogManagement() {
         </div>
         <button
           onClick={handleAddProduct}
-          className="flex items-center gap-2 px-6 py-3 bg-orange-500 text-white rounded-lg hover:bg-orange-600 transition-colors"
+          disabled={loading}
+          className="flex items-center gap-2 px-6 py-3 bg-orange-500 text-white rounded-lg hover:bg-orange-600 transition-colors disabled:bg-gray-300 disabled:cursor-not-allowed"
         >
           <Plus className="w-5 h-5" />
           Adicionar Produto
         </button>
       </div>
 
-      {/* Filtros */}
-      <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 mb-6">
-        <div className="flex flex-col md:flex-row gap-4">
-          <div className="flex-1 relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
-            <input
-              type="text"
-              placeholder="Buscar produtos..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500"
-            />
+      {/* Loading State */}
+      {loading && (
+        <div className="flex items-center justify-center py-12">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-orange-500"></div>
+          <span className="ml-3 text-gray-600">Carregando produtos...</span>
+        </div>
+      )}
+
+      {/* Error State */}
+      {error && (
+        <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-6 flex items-start gap-3">
+          <div className="w-5 h-5 text-red-600 mt-0.5">⚠️</div>
+          <div>
+            <p className="text-red-900">Erro ao carregar produtos</p>
+            <p className="text-sm text-red-700 mt-1">{error}</p>
+            <button
+              onClick={() => fetchProducts()}
+              className="mt-2 px-3 py-1 bg-red-100 text-red-800 rounded text-sm hover:bg-red-200 transition-colors"
+            >
+              Tentar novamente
+            </button>
           </div>
-          
-          <select
-            value={categoryFilter}
-            onChange={(e) => setCategoryFilter(e.target.value)}
-            className="px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500 appearance-none bg-white"
-          >
-            <option value="all">Todas as Categorias</option>
-            {categories.map(category => (
-              <option key={category} value={category}>{category}</option>
+        </div>
+      )}
+
+      {/* Content */}
+      {!loading && !error && (
+        <>
+          {/* Filtros */}
+          <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 mb-6">
+            <div className="flex flex-col md:flex-row gap-4">
+              <div className="flex-1 relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
+                <input
+                  type="text"
+                  placeholder="Buscar produtos..."
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500"
+                />
+              </div>
+              
+              <select
+                value={categoryFilter}
+                onChange={(e) => setCategoryFilter(e.target.value)}
+                className="px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500 appearance-none bg-white"
+              >
+                <option value="all">Todas as Categorias</option>
+                {categories.map(category => (
+                  <option key={category} value={category}>{category}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          {/* Grade de Produtos */}
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {filteredProducts.map((product) => (
+              <div key={product.id} className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
+                <div className="aspect-video bg-gray-100 flex items-center justify-center relative">
+                  {product.imageUrl ? (
+                    <img 
+                      src={product.imageUrl} 
+                      alt={product.name}
+                      className="w-full h-full object-cover"
+                    />
+                  ) : (
+                    <ImageIcon className="w-16 h-16 text-gray-300" />
+                  )}
+                  {!product.available && (
+                    <div className="absolute inset-0 bg-black bg-opacity-50 flex items-center justify-center">
+                      <span className="text-white px-4 py-2 bg-red-500 rounded-lg">Inativo</span>
+                    </div>
+                  )}
+                </div>
+                
+                <div className="p-6">
+                  <div className="flex items-start justify-between mb-2">
+                    <div className="flex-1">
+                      <h3 className="text-lg mb-1">{product.name}</h3>
+                      <span className="inline-block px-2 py-1 bg-gray-100 text-gray-700 rounded text-sm">
+                        {product.category}
+                      </span>
+                    </div>
+                  </div>
+                  
+                  <p className="text-sm text-gray-600 mb-4 line-clamp-2">
+                    {product.description}
+                  </p>
+                  
+                  <div className="flex items-center justify-between mb-4">
+                    <div>
+                      <p className="text-sm text-gray-600">Preço</p>
+                      <p className="text-xl text-green-600">R$ {product.price.toFixed(2)}</p>
+                    </div>
+                    <div>
+                      <p className="text-sm text-gray-600">Estoque</p>
+                      <p className="text-xl">{product.stock || 0} un</p>
+                    </div>
+                  </div>
+                  
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => handleToggleActive(product.id)}
+                      className={`flex-1 px-4 py-2 rounded-lg transition-colors ${
+                        product.available 
+                          ? 'bg-green-100 text-green-700 hover:bg-green-200' 
+                          : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                      }`}
+                    >
+                      {product.available ? 'Ativo' : 'Inativo'}
+                    </button>
+                    <button
+                      onClick={() => handleEditProduct(product)}
+                      className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
+                    >
+                      <Edit className="w-4 h-4" />
+                    </button>
+                    <button
+                      onClick={() => handleDeleteProduct(product.id)}
+                      className="px-4 py-2 border border-red-300 text-red-600 rounded-lg hover:bg-red-50 transition-colors"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+              </div>
             ))}
-          </select>
-        </div>
-      </div>
-
-      {/* Grade de Produtos */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        {filteredProducts.map((product) => (
-          <div key={product.id} className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
-            <div className="aspect-video bg-gray-100 flex items-center justify-center relative">
-              <ImageIcon className="w-16 h-16 text-gray-300" />
-              {!product.active && (
-                <div className="absolute inset-0 bg-black bg-opacity-50 flex items-center justify-center">
-                  <span className="text-white px-4 py-2 bg-red-500 rounded-lg">Inativo</span>
-                </div>
-              )}
-            </div>
-            
-            <div className="p-6">
-              <div className="flex items-start justify-between mb-2">
-                <div className="flex-1">
-                  <h3 className="text-lg mb-1">{product.name}</h3>
-                  <span className="inline-block px-2 py-1 bg-gray-100 text-gray-700 rounded text-sm">
-                    {product.category}
-                  </span>
-                </div>
-              </div>
-              
-              <p className="text-sm text-gray-600 mb-4 line-clamp-2">
-                {product.description}
-              </p>
-              
-              <div className="flex items-center justify-between mb-4">
-                <div>
-                  <p className="text-sm text-gray-600">Preço</p>
-                  <p className="text-xl text-green-600">R$ {product.price.toFixed(2)}</p>
-                </div>
-                <div>
-                  <p className="text-sm text-gray-600">Estoque</p>
-                  <p className="text-xl">{product.stock} un</p>
-                </div>
-              </div>
-              
-              <div className="flex gap-2">
-                <button
-                  onClick={() => handleToggleActive(product.id)}
-                  className={`flex-1 px-4 py-2 rounded-lg transition-colors ${
-                    product.active 
-                      ? 'bg-green-100 text-green-700 hover:bg-green-200' 
-                      : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                  }`}
-                >
-                  {product.active ? 'Ativo' : 'Inativo'}
-                </button>
-                <button
-                  onClick={() => handleEditProduct(product)}
-                  className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
-                >
-                  <Edit className="w-4 h-4" />
-                </button>
-                <button
-                  onClick={() => handleDeleteProduct(product.id)}
-                  className="px-4 py-2 border border-red-300 text-red-600 rounded-lg hover:bg-red-50 transition-colors"
-                >
-                  <Trash2 className="w-4 h-4" />
-                </button>
-              </div>
-            </div>
           </div>
-        ))}
-      </div>
 
-      {filteredProducts.length === 0 && (
-        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-12 text-center">
-          <ImageIcon className="w-16 h-16 text-gray-300 mx-auto mb-4" />
-          <p className="text-gray-600 mb-2">Nenhum produto encontrado</p>
-          <p className="text-sm text-gray-500">Tente ajustar os filtros ou adicione um novo produto</p>
-        </div>
+          {filteredProducts.length === 0 && products && products.length > 0 && (
+            <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-12 text-center">
+              <ImageIcon className="w-16 h-16 text-gray-300 mx-auto mb-4" />
+              <p className="text-gray-600 mb-2">Nenhum produto encontrado</p>
+              <p className="text-sm text-gray-500">Tente ajustar os filtros ou adicione um novo produto</p>
+            </div>
+          )}
+
+          {products && products.length === 0 && (
+            <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-12 text-center">
+              <ImageIcon className="w-16 h-16 text-gray-300 mx-auto mb-4" />
+              <p className="text-gray-600 mb-2">Nenhum produto cadastrado</p>
+              <p className="text-sm text-gray-500 mb-4">Comece adicionando seu primeiro produto</p>
+              <button
+                onClick={handleAddProduct}
+                className="px-6 py-2 bg-orange-500 text-white rounded-lg hover:bg-orange-600 transition-colors"
+              >
+                Adicionar Produto
+              </button>
+            </div>
+          )}
+        </>
       )}
 
       {/* Modal de Adicionar/Editar Produto */}

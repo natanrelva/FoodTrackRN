@@ -14,7 +14,11 @@ export function CartProvider({ children }: { children: ReactNode }) {
           i.id === item.id ? { ...i, quantity: i.quantity + 1 } : i
         );
       }
-      return [...prevItems, { ...item, quantity: 1 }];
+      return [...prevItems, { 
+        ...item, 
+        quantity: 1,
+        productId: item.productId || item.id // Ensure productId is set
+      }];
     });
   };
 

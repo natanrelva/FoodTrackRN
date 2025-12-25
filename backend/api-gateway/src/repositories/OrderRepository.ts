@@ -392,9 +392,10 @@ export class OrderRepository extends BaseRepository<Order> {
     if (status === 'pending') {
       status = 'draft'; // Map pending to draft
     }
-    if (status === 'preparing') {
-      status = 'in_preparation'; // Map preparing to in_preparation
-    }
+    // Remove the old mapping that was causing the issue
+    // if (status === 'preparing') {
+    //   status = 'in_preparation'; // This was the problem!
+    // }
 
     return OrderSchema.parse({
       id: row.id,
@@ -417,5 +418,85 @@ export class OrderRepository extends BaseRepository<Order> {
       createdAt: new Date(row.createdAt),
       updatedAt: new Date(row.updatedAt),
     });
+  }
+
+  // Analytics methods
+  async findByDateRange(startDate: Date, endDate: Date, tenantId: string): Promise<Order[]> {
+    const query = `
+      SELECT 
+        o.id,
+        o.tenant_id as "tenantId",
+        o.number,
+        o.customer_id as "customerId",
+        c.name as customer_name,
+        c.phone as customer_phone,
+        c.email as customer_email,
+        c.address as customer_address,
+        o.items,
+        o.status,
+        o.channel,
+        o.payment,
+        o.delivery,
+        o.subtotal,
+        o.delivery_fee as "deliveryFee",
+        o.discount,
+        o.total,
+        o.notes,
+        o.estimated_completion_time as "estimatedCompletionTime",
+        o.created_at as "createdAt",
+        o.updated_at as "updatedAt"
+      FROM orders o
+      LEFT JOIN customers c ON o.customer_id = c.id
+      WHERE o.tenant_id = $1 
+        AND o.created_at >= $2 
+        AND o.created_at <= $3
+      ORDER BY o.created_at DESC
+    `;
+    
+    try {
+      const result = await this.pool.query(query, [tenantId, startDate, endDate]);
+      return result.rows.map(row => this.mapRowToOrder(row));
+    } catch (error) {
+      throw new Error(`Failed to find orders by date range: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+
+  async findRecent(tenantId: string, limit: number = 10): Promise<Order[]> {
+    const query = `
+      SELECT 
+        o.id,
+        o.tenant_id as "tenantId",
+        o.number,
+        o.customer_id as "customerId",
+        c.name as customer_name,
+        c.phone as customer_phone,
+        c.email as customer_email,
+        c.address as customer_address,
+        o.items,
+        o.status,
+        o.channel,
+        o.payment,
+        o.delivery,
+        o.subtotal,
+        o.delivery_fee as "deliveryFee",
+        o.discount,
+        o.total,
+        o.notes,
+        o.estimated_completion_time as "estimatedCompletionTime",
+        o.created_at as "createdAt",
+        o.updated_at as "updatedAt"
+      FROM orders o
+      LEFT JOIN customers c ON o.customer_id = c.id
+      WHERE o.tenant_id = $1
+      ORDER BY o.created_at DESC
+      LIMIT $2
+    `;
+    
+    try {
+      const result = await this.pool.query(query, [tenantId, limit]);
+      return result.rows.map(row => this.mapRowToOrder(row));
+    } catch (error) {
+      throw new Error(`Failed to find recent orders: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
   }
 }

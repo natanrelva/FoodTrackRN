@@ -8,3 +8,4 @@ export * from './order';
 export * from './kitchen';
 export * from './delivery';
 export * from './events';
+export * from './frontend';

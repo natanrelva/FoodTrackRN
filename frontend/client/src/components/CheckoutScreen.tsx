@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { ArrowLeft, CreditCard, QrCode, MapPin, Check } from 'lucide-react';
 import { useCart } from '../contexts/CartContext';
-import { WebScreen } from '@foodtrack/types';
+import { useOrders } from '../hooks/useClientApi';
 import { toast } from 'sonner';
 
 import { CheckoutScreenProps } from '@foodtrack/types';
@@ -10,10 +10,12 @@ type PaymentMethod = 'pix' | 'credit' | null;
 
 export function CheckoutScreen({ onNavigate }: CheckoutScreenProps) {
   const { items, getSubtotal, clearCart } = useCart();
+  const { createOrder, loading: orderLoading } = useOrders();
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>(null);
   const [showPixQR, setShowPixQR] = useState(false);
   const [address, setAddress] = useState('Rua das Flores, 123 - Apt 45');
   const [isProcessing, setIsProcessing] = useState(false);
+  const [currentOrderId, setCurrentOrderId] = useState<string | null>(null);
 
   const deliveryFee = 5.00;
   const total = getSubtotal() + deliveryFee;
@@ -26,27 +28,70 @@ export function CheckoutScreen({ onNavigate }: CheckoutScreenProps) {
 
     setIsProcessing(true);
 
-    // Simulate payment processing
-    await new Promise((resolve) => setTimeout(resolve, 2000));
+    try {
+      // Create order with real API
+      const orderData = {
+        items: items.map(item => ({
+          productId: item.productId || item.id, // Handle both productId and id
+          quantity: item.quantity,
+          extras: item.extras?.map(extra => 
+            typeof extra === 'string' ? extra : extra.id
+          ) || [],
+          modifications: item.modifications || [],
+          notes: item.notes || '',
+        })),
+        customerInfo: {
+          name: 'Cliente Teste', // TODO: Get from user context
+          email: 'cliente@teste.com',
+          phone: '(11) 99999-9999',
+          address: {
+            street: address,
+            city: 'São Paulo',
+            state: 'SP',
+            zipCode: '01234-567',
+            complement: '',
+          },
+        },
+        paymentMethod: paymentMethod === 'pix' ? 'pix' : 'credit_card',
+        deliveryMethod: 'delivery',
+        notes: '',
+      };
 
-    if (paymentMethod === 'pix') {
-      setShowPixQR(true);
+      const result = await createOrder(orderData);
+
+      if (result.success && result.order) {
+        setCurrentOrderId(result.order.id);
+        
+        if (paymentMethod === 'pix') {
+          setShowPixQR(true);
+          setIsProcessing(false);
+        } else {
+          // Credit card payment - simulate processing
+          await new Promise((resolve) => setTimeout(resolve, 1000));
+          clearCart();
+          toast.success('Pagamento confirmado!');
+          setIsProcessing(false);
+          onNavigate('tracking', result.order.id);
+        }
+      } else {
+        toast.error(result.error || 'Erro ao criar pedido');
+        setIsProcessing(false);
+      }
+    } catch (error) {
+      console.error('Error creating order:', error);
+      toast.error('Erro ao processar pedido');
       setIsProcessing(false);
-    } else {
-      // Credit card payment
-      const orderId = `ORD-${Date.now()}`;
-      clearCart();
-      toast.success('Pagamento confirmado!');
-      setIsProcessing(false);
-      onNavigate('tracking', orderId);
     }
   };
 
   const handlePixConfirmation = () => {
-    const orderId = `ORD-${Date.now()}`;
-    clearCart();
-    toast.success('Pagamento via Pix confirmado!');
-    onNavigate('tracking', orderId);
+    if (currentOrderId) {
+      clearCart();
+      toast.success('Pagamento via Pix confirmado!');
+      onNavigate('tracking', currentOrderId);
+    } else {
+      toast.error('Erro: ID do pedido não encontrado');
+    }
   };
 
   return (
@@ -167,10 +212,10 @@ export function CheckoutScreen({ onNavigate }: CheckoutScreenProps) {
       <div className="bg-white border-t p-4">
         <button
           onClick={handlePayment}
-          disabled={isProcessing}
+          disabled={isProcessing || orderLoading}
           className="w-full bg-orange-500 text-white py-4 rounded-xl hover:bg-orange-600 transition-colors disabled:bg-slate-300 disabled:cursor-not-allowed"
         >
-          {isProcessing ? 'Processando...' : 'Pagar agora'}
+          {isProcessing || orderLoading ? 'Processando...' : 'Pagar agora'}
         </button>
       </div>
 

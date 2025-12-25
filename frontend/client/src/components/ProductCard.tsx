@@ -12,9 +12,10 @@ export function ProductCard({ product }: ProductCardProps) {
   const handleAddToCart = () => {
     addItem({
       id: product.id,
+      productId: product.id, // Add productId for API compatibility
       name: product.name,
       price: product.price,
-      image: product.image,
+      image: product.image || product.imageUrl, // Handle both formats
       extras: selectedExtras
     });
     toast.success(`${product.name} adicionado ao carrinho!`);
@@ -35,7 +36,7 @@ export function ProductCard({ product }: ProductCardProps) {
       <div className="bg-white rounded-2xl shadow-md overflow-hidden hover:shadow-xl transition-shadow">
         <div className="relative h-48">
           <img
-            src={product.image}
+            src={product.image || product.imageUrl}
             alt={product.name}
             className="w-full h-full object-cover"
           />
@@ -77,7 +78,7 @@ export function ProductCard({ product }: ProductCardProps) {
             <div className="flex-1 overflow-y-auto p-4">
               <div className="mb-4">
                 <img
-                  src={product.image}
+                  src={product.image || product.imageUrl}
                   alt={product.name}
                   className="w-full h-32 object-cover rounded-xl"
                 />
